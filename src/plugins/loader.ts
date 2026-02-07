@@ -1,5 +1,5 @@
 import { join, dirname, resolve, basename } from "path";
-import { existsSync, readFileSync, symlinkSync, lstatSync, unlinkSync, realpathSync, cpSync, rmSync } from "fs";
+import { existsSync, readFileSync, symlinkSync, lstatSync, unlinkSync, realpathSync, cpSync, rmSync, renameSync, mkdirSync } from "fs";
 import type {
   TodoistPlugin, PluginManifest, PluginContext,
   HookRegistry, ViewRegistry, ExtensionRegistry, PaletteRegistry,
@@ -14,6 +14,7 @@ import { getLogger } from "../utils/logger.ts";
 const log = getLogger("plugins");
 
 const PLUGINS_DIR = join(CONFIG_DIR, "plugins");
+const PLUGIN_DATA_DIR = join(CONFIG_DIR, "plugin-data");
 
 // ── Constants & Version ─────────────────────────────────────────────
 
@@ -116,6 +117,24 @@ function ensureSharedDependencies(): void {
     symlinkSync(cliNodeModules, target);
   } catch {
     // Non-fatal
+  }
+}
+
+/**
+ * Migrate plugin data from old location (plugins/<name>/data/) to new
+ * location (plugin-data/<name>/) so updates don't wipe data.
+ * Runs once per plugin — old dir is moved, not copied.
+ */
+function migratePluginData(name: string, pluginDir: string): void {
+  const oldDataDir = join(pluginDir, "data");
+  const newDataDir = join(PLUGIN_DATA_DIR, name);
+  if (!existsSync(oldDataDir) || existsSync(newDataDir)) return;
+  try {
+    mkdirSync(PLUGIN_DATA_DIR, { recursive: true });
+    renameSync(oldDataDir, newDataDir);
+    log.info(`Migrated data for "${name}" to plugin-data/`);
+  } catch (err) {
+    log.warn(`Failed to migrate data for "${name}": ${err instanceof Error ? err.message : err}`);
   }
 }
 
@@ -453,8 +472,9 @@ export async function loadPlugins(
         continue;
       }
 
-      // Storage uses the stable pluginDir (not the sync copy) so data persists
-      const dataDir = join(pluginDir, "data");
+      // Data lives outside plugin dir so updates don't wipe it
+      migratePluginData(name, pluginDir);
+      const dataDir = join(PLUGIN_DATA_DIR, name);
       const storage = createPluginStorage(dataDir);
       storages.push(storage);
       const api = createApiProxy(hooks);
