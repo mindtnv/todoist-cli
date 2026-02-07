@@ -17,6 +17,7 @@ import { registerStatsCommand } from "./stats.ts";
 import { registerFilterCommand } from "./filter.ts";
 import { registerPluginCommand } from "./plugin.ts";
 import { loadCliPlugins } from "./plugin-loader.ts";
+import { setupBundledPlugins } from "../plugins/bundled.ts";
 import { getTasks, createTask } from "../api/tasks.ts";
 import { didYouMean, handleError, setDebug, debug } from "../utils/errors.ts";
 import { validateContent, validatePriority } from "../utils/validation.ts";
@@ -117,7 +118,7 @@ async function runWithWatch(interval: number, fn: () => Promise<void>): Promise<
 program
   .name("todoist")
   .description("CLI tool for managing Todoist tasks")
-  .version("0.2.0")
+  .version("0.3.1")
   .option("--debug", "Enable debug output")
   .hook("preAction", () => {
     if (program.opts().debug) {
@@ -631,6 +632,7 @@ program.on("command:*", (operands: string[]) => {
 });
 
 async function main() {
+  setupBundledPlugins();
   await loadCliPlugins(program);
   await program.parseAsync();
 }
