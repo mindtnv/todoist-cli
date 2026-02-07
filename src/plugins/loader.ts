@@ -114,6 +114,85 @@ function createLogger(pluginName: string): PluginLogger {
   };
 }
 
+/**
+ * Topological sort of plugin entries based on their `after` field.
+ * Uses Kahn's algorithm. If plugin B has `after: "A"`, A is loaded before B.
+ *
+ * - If `after` references a non-existent plugin, logs a warning and ignores the dependency.
+ * - If a circular dependency is detected, logs a warning and falls back to the original order.
+ */
+function topologicalSort(
+  entries: Array<[string, PluginConfigEntry]>,
+): Array<[string, PluginConfigEntry]> {
+  const nameSet = new Set(entries.map(([name]) => name));
+  const entryMap = new Map(entries.map(([name, config]) => [name, config]));
+
+  // Build adjacency list and in-degree count
+  // Edge: after -> name (after must come before name)
+  const inDegree = new Map<string, number>();
+  const dependents = new Map<string, string[]>(); // dep -> list of plugins that depend on it
+
+  for (const [name] of entries) {
+    inDegree.set(name, 0);
+    dependents.set(name, []);
+  }
+
+  let hasDependencies = false;
+
+  for (const [name, config] of entries) {
+    const after = config.after;
+    if (!after) continue;
+
+    if (!nameSet.has(after)) {
+      console.warn(
+        `[plugins] Plugin "${name}" declares after: "${after}", but "${after}" is not a known plugin. Ignoring dependency.`
+      );
+      continue;
+    }
+
+    hasDependencies = true;
+    inDegree.set(name, (inDegree.get(name) ?? 0) + 1);
+    dependents.get(after)!.push(name);
+  }
+
+  // If no dependencies exist, skip sorting and return original order
+  if (!hasDependencies) return entries;
+
+  // Kahn's algorithm
+  const queue: string[] = [];
+  for (const [name, degree] of inDegree) {
+    if (degree === 0) queue.push(name);
+  }
+
+  const sorted: string[] = [];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    sorted.push(current);
+
+    for (const dependent of dependents.get(current) ?? []) {
+      const newDegree = (inDegree.get(dependent) ?? 1) - 1;
+      inDegree.set(dependent, newDegree);
+      if (newDegree === 0) {
+        queue.push(dependent);
+      }
+    }
+  }
+
+  if (sorted.length !== entries.length) {
+    // Circular dependency detected — fall back to original order
+    const unsorted = entries
+      .filter(([name]) => !sorted.includes(name))
+      .map(([name]) => name);
+    console.warn(
+      `[plugins] Circular dependency detected among plugins: ${unsorted.join(", ")}. Falling back to original order.`
+    );
+    return entries;
+  }
+
+  return sorted.map((name) => [name, entryMap.get(name)!] as [string, PluginConfigEntry]);
+}
+
 export interface LoadedPlugins {
   plugins: Array<{ plugin: TodoistPlugin; ctx: PluginContext }>;
   storages: PluginStorageWithClose[];
@@ -164,7 +243,12 @@ export async function loadPlugins(
 
   ensureSharedDependencies();
 
-  for (const [name, pluginConfig] of Object.entries(pluginConfigs)) {
+  // ── Topological sort by `after` field ──
+  // If plugin B has `after: "A"`, then A must load before B.
+  const entries = Object.entries(pluginConfigs);
+  const sortedEntries = topologicalSort(entries);
+
+  for (const [name, pluginConfig] of sortedEntries) {
     if (pluginConfig.enabled === false) continue;
 
     const pluginDir = pluginConfig.path
@@ -277,10 +361,17 @@ export async function loadPlugins(
             extensions.removeStatusBarItem(id);
             statusBarContextMap.delete(id);
           },
+          addModal(definition) {
+            extensions.addModal(definition);
+          },
+          removeModal(id) {
+            extensions.removeModal(id);
+          },
           getTaskColumns: () => extensions.getTaskColumns(),
           getDetailSections: () => extensions.getDetailSections(),
           getKeybindings: () => extensions.getKeybindings(),
           getStatusBarItems: () => extensions.getStatusBarItems(),
+          getModals: () => extensions.getModals(),
         };
         plugin.registerExtensions(trackingExtRegistry);
       }

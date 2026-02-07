@@ -3,6 +3,7 @@ import type {
   DetailSectionDefinition,
   KeybindingDefinition,
   StatusBarItemDefinition,
+  ModalDefinition,
   ExtensionRegistry,
 } from "./types.ts";
 
@@ -11,6 +12,7 @@ export function createExtensionRegistry(): ExtensionRegistry {
   const sections: DetailSectionDefinition[] = [];
   const keybindings: KeybindingDefinition[] = [];
   const statusBarItems: StatusBarItemDefinition[] = [];
+  const modals: ModalDefinition[] = [];
 
   return {
     addTaskColumn(column: TaskColumnDefinition) {
@@ -65,9 +67,23 @@ export function createExtensionRegistry(): ExtensionRegistry {
       if (idx !== -1) statusBarItems.splice(idx, 1);
     },
 
+    addModal(definition: ModalDefinition) {
+      if (modals.some(m => m.id === definition.id)) {
+        console.warn(`[plugin] Modal "${definition.id}" already registered, skipping`);
+        return;
+      }
+      modals.push(definition);
+    },
+
+    removeModal(id: string) {
+      const idx = modals.findIndex(m => m.id === id);
+      if (idx !== -1) modals.splice(idx, 1);
+    },
+
     getTaskColumns: () => [...columns],
     getDetailSections: () => [...sections],
     getKeybindings: () => [...keybindings],
     getStatusBarItems: () => [...statusBarItems],
+    getModals: () => [...modals],
   };
 }

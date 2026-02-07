@@ -1,5 +1,5 @@
 import React from "react";
-import { Text } from "ink";
+import { Box, Text } from "ink";
 import { InputPrompt } from "./InputPrompt.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { HelpOverlay } from "./HelpOverlay.tsx";
@@ -11,7 +11,8 @@ import { EditTaskModal } from "./EditTaskModal.tsx";
 import { useTasksViewContext } from "../contexts/TasksViewContext.tsx";
 import type { TasksViewContextValue } from "../contexts/TasksViewContext.tsx";
 
-type Modal = "none" | "add" | "addSubtask" | "edit" | "delete" | "filter" | "search" | "help" | "sort" | "bulkDelete" | "command" | "due" | "deadline" | "move" | "label" | "editFull" | "createFull" | "rename" | "pluginInput" | "createProject" | "createLabel";
+type BuiltinModal = "none" | "add" | "addSubtask" | "edit" | "delete" | "filter" | "search" | "help" | "sort" | "bulkDelete" | "command" | "due" | "deadline" | "move" | "label" | "editFull" | "createFull" | "rename" | "pluginInput" | "createProject" | "createLabel";
+type Modal = BuiltinModal | `plugin:${string}`;
 
 const MODAL_REGISTRY: Record<string, (ctx: TasksViewContextValue) => React.ReactNode | null> = {
   none: () => null,
@@ -232,10 +233,29 @@ const MODAL_REGISTRY: Record<string, (ctx: TasksViewContextValue) => React.React
 
 export function ModalManager() {
   const ctx = useTasksViewContext();
+
+  // Check built-in modals first
   const renderer = MODAL_REGISTRY[ctx.modal];
-  if (!renderer) return null;
-  const result = renderer(ctx);
-  return result ? <>{result}</> : null;
+  if (renderer) {
+    const result = renderer(ctx);
+    return result ? <>{result}</> : null;
+  }
+
+  // Fall back to plugin-registered modals for "plugin:<id>" modal names
+  if (ctx.modal.startsWith("plugin:") && ctx.pluginExtensions) {
+    const pluginModalId = ctx.modal.slice("plugin:".length);
+    const pluginModal = ctx.pluginExtensions.getModals().find(m => m.id === pluginModalId);
+    if (pluginModal) {
+      const PluginComponent = pluginModal.component;
+      return (
+        <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={1}>
+          <PluginComponent onClose={() => ctx.setModal("none")} currentTask={ctx.selectedTask ?? null} />
+        </Box>
+      );
+    }
+  }
+
+  return null;
 }
 
-export type { Modal };
+export type { Modal, BuiltinModal };

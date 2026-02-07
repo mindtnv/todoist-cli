@@ -3,7 +3,7 @@ import type { Task, Project, Label, CreateTaskParams, UpdateTaskParams } from ".
 import type { Modal } from "../components/ModalManager.tsx";
 import type { SortField } from "../components/SortMenu.tsx";
 import type { Command } from "../components/CommandPalette.tsx";
-import type { ExtensionRegistry } from "../../plugins/types.ts";
+import type { ExtensionRegistry, PluginUiApi } from "../../plugins/types.ts";
 
 // Group handler callbacks
 export interface TaskHandlers {
@@ -50,6 +50,9 @@ export interface TasksViewContextValue {
     placeholder?: string;
     formatPreview?: (value: string) => string;
   } | null;
+  showStatus?: (message: string) => void;
+  navigate?: (view: string) => void;
+  refreshTasks?: () => Promise<void>;
 }
 
 const TasksViewContext = createContext<TasksViewContextValue | null>(null);
@@ -62,4 +65,25 @@ export function useTasksViewContext(): TasksViewContextValue {
   const ctx = useContext(TasksViewContext);
   if (!ctx) throw new Error("useTasksViewContext must be used within TasksViewProvider");
   return ctx;
+}
+
+/**
+ * Maps the TasksViewContext methods to the PluginUiApi interface.
+ * Used when creating PluginContext instances for plugins running in TUI mode.
+ */
+export function createPluginUiApi(ctx: TasksViewContextValue): PluginUiApi {
+  return {
+    showStatus(message: string) {
+      ctx.showStatus?.(message);
+    },
+    navigate(view: string) {
+      ctx.navigate?.(view);
+    },
+    openModal(modalId: string) {
+      ctx.setModal(`plugin:${modalId}` as Modal);
+    },
+    refreshTasks() {
+      ctx.refreshTasks?.();
+    },
+  };
 }

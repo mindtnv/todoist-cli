@@ -2,6 +2,10 @@ import type { Command as CliCommand } from "commander";
 import type {
   Task, Project, Label, Section, Comment,
   CreateTaskParams, UpdateTaskParams, TaskFilter,
+  CreateProjectParams, UpdateProjectParams,
+  CreateLabelParams, UpdateLabelParams,
+  CreateSectionParams, UpdateSectionParams,
+  CreateCommentParams, UpdateCommentParams,
 } from "../api/types.ts";
 
 // ── Plugin Storage ──
@@ -24,6 +28,15 @@ export interface PluginLogger {
   error(message: string): void;
 }
 
+// ── Plugin UI API ──
+
+export interface PluginUiApi {
+  showStatus(message: string): void;
+  navigate(view: string): void;
+  openModal(modalId: string): void;
+  refreshTasks(): void;
+}
+
 // ── Plugin Context ──
 
 export interface PluginContext {
@@ -32,9 +45,11 @@ export interface PluginContext {
   config: Record<string, unknown>;
   pluginDir: string;
   log: PluginLogger;
+  ui?: PluginUiApi;  // only available in TUI mode
 }
 
 export interface PluginApi {
+  // Tasks
   getTasks: (filter?: TaskFilter) => Promise<Task[]>;
   getTask: (id: string) => Promise<Task>;
   createTask: (params: CreateTaskParams) => Promise<Task>;
@@ -42,17 +57,36 @@ export interface PluginApi {
   closeTask: (id: string) => Promise<void>;
   reopenTask: (id: string) => Promise<void>;
   deleteTask: (id: string) => Promise<void>;
+  // Projects
   getProjects: () => Promise<Project[]>;
   getProject: (id: string) => Promise<Project>;
+  createProject: (params: CreateProjectParams) => Promise<Project>;
+  updateProject: (id: string, params: UpdateProjectParams) => Promise<Project>;
+  deleteProject: (id: string) => Promise<void>;
+  // Labels
   getLabels: () => Promise<Label[]>;
   getLabel: (id: string) => Promise<Label>;
+  createLabel: (params: CreateLabelParams) => Promise<Label>;
+  updateLabel: (id: string, params: UpdateLabelParams) => Promise<Label>;
+  deleteLabel: (id: string) => Promise<void>;
+  // Sections
   getSections: (projectId?: string) => Promise<Section[]>;
+  getSection: (id: string) => Promise<Section>;
+  createSection: (params: CreateSectionParams) => Promise<Section>;
+  updateSection: (id: string, params: UpdateSectionParams) => Promise<Section>;
+  deleteSection: (id: string) => Promise<void>;
+  // Comments
   getComments: (taskId: string) => Promise<Comment[]>;
+  getComment: (id: string) => Promise<Comment>;
+  createComment: (params: CreateCommentParams) => Promise<Comment>;
+  updateComment: (id: string, params: UpdateCommentParams) => Promise<Comment>;
+  deleteComment: (id: string) => Promise<void>;
 }
 
 // ── Hook Registry ──
 
 export type HookEvent =
+  // Tasks
   | "task.creating"
   | "task.created"
   | "task.completing"
@@ -60,10 +94,43 @@ export type HookEvent =
   | "task.updating"
   | "task.updated"
   | "task.deleting"
-  | "task.deleted";
+  | "task.deleted"
+  // Projects
+  | "project.creating"
+  | "project.created"
+  | "project.updating"
+  | "project.updated"
+  | "project.deleting"
+  | "project.deleted"
+  // Labels
+  | "label.creating"
+  | "label.created"
+  | "label.updating"
+  | "label.updated"
+  | "label.deleting"
+  | "label.deleted"
+  // Sections
+  | "section.creating"
+  | "section.created"
+  | "section.updating"
+  | "section.updated"
+  | "section.deleting"
+  | "section.deleted"
+  // Comments
+  | "comment.creating"
+  | "comment.created"
+  | "comment.updating"
+  | "comment.updated"
+  | "comment.deleting"
+  | "comment.deleted"
+  // App lifecycle
+  | "app.loaded"
+  | "app.unloading"
+  | "view.changed";
 
 // ── Per-event hook context types ──
 
+// Task contexts
 export interface TaskCreatingContext { params: CreateTaskParams }
 export interface TaskCreatedContext { task: Task }
 export interface TaskCompletingContext { task: Task }
@@ -73,7 +140,45 @@ export interface TaskUpdatedContext { task: Task; changes: UpdateTaskParams }
 export interface TaskDeletingContext { task: Task }
 export interface TaskDeletedContext { task: Task }
 
+// Project contexts
+export interface ProjectCreatingContext { params: CreateProjectParams }
+export interface ProjectCreatedContext { project: Project }
+export interface ProjectUpdatingContext { project: Project; changes: UpdateProjectParams }
+export interface ProjectUpdatedContext { project: Project; changes: UpdateProjectParams }
+export interface ProjectDeletingContext { project: Project }
+export interface ProjectDeletedContext { project: Project }
+
+// Label contexts
+export interface LabelCreatingContext { params: CreateLabelParams }
+export interface LabelCreatedContext { label: Label }
+export interface LabelUpdatingContext { label: Label; changes: UpdateLabelParams }
+export interface LabelUpdatedContext { label: Label; changes: UpdateLabelParams }
+export interface LabelDeletingContext { label: Label }
+export interface LabelDeletedContext { label: Label }
+
+// Section contexts
+export interface SectionCreatingContext { params: CreateSectionParams }
+export interface SectionCreatedContext { section: Section }
+export interface SectionUpdatingContext { section: Section; changes: UpdateSectionParams }
+export interface SectionUpdatedContext { section: Section; changes: UpdateSectionParams }
+export interface SectionDeletingContext { section: Section }
+export interface SectionDeletedContext { section: Section }
+
+// Comment contexts
+export interface CommentCreatingContext { params: CreateCommentParams }
+export interface CommentCreatedContext { comment: Comment }
+export interface CommentUpdatingContext { comment: Comment; changes: UpdateCommentParams }
+export interface CommentUpdatedContext { comment: Comment; changes: UpdateCommentParams }
+export interface CommentDeletingContext { comment: Comment }
+export interface CommentDeletedContext { comment: Comment }
+
+// App lifecycle contexts
+export interface AppLoadedContext {}
+export interface AppUnloadingContext {}
+export interface ViewChangedContext { from?: string; to: string }
+
 export type HookContextMap = {
+  // Tasks
   "task.creating": TaskCreatingContext;
   "task.created": TaskCreatedContext;
   "task.completing": TaskCompletingContext;
@@ -82,17 +187,78 @@ export type HookContextMap = {
   "task.updated": TaskUpdatedContext;
   "task.deleting": TaskDeletingContext;
   "task.deleted": TaskDeletedContext;
+  // Projects
+  "project.creating": ProjectCreatingContext;
+  "project.created": ProjectCreatedContext;
+  "project.updating": ProjectUpdatingContext;
+  "project.updated": ProjectUpdatedContext;
+  "project.deleting": ProjectDeletingContext;
+  "project.deleted": ProjectDeletedContext;
+  // Labels
+  "label.creating": LabelCreatingContext;
+  "label.created": LabelCreatedContext;
+  "label.updating": LabelUpdatingContext;
+  "label.updated": LabelUpdatedContext;
+  "label.deleting": LabelDeletingContext;
+  "label.deleted": LabelDeletedContext;
+  // Sections
+  "section.creating": SectionCreatingContext;
+  "section.created": SectionCreatedContext;
+  "section.updating": SectionUpdatingContext;
+  "section.updated": SectionUpdatedContext;
+  "section.deleting": SectionDeletingContext;
+  "section.deleted": SectionDeletedContext;
+  // Comments
+  "comment.creating": CommentCreatingContext;
+  "comment.created": CommentCreatedContext;
+  "comment.updating": CommentUpdatingContext;
+  "comment.updated": CommentUpdatedContext;
+  "comment.deleting": CommentDeletingContext;
+  "comment.deleted": CommentDeletedContext;
+  // App lifecycle
+  "app.loaded": AppLoadedContext;
+  "app.unloading": AppUnloadingContext;
+  "view.changed": ViewChangedContext;
 };
 
 /** Union of all hook context types — kept for backward compatibility */
 export type HookContext = HookContextMap[HookEvent];
 
-export type HookHandler<E extends HookEvent = HookEvent> = (ctx: HookContextMap[E]) => Promise<{ message?: string } | void>;
+/**
+ * Result type returned by hook handlers.
+ * - `message`: Optional status message to display.
+ * - `params`: For "before" hooks only — partial params to merge into the context
+ *   (waterfall pattern: each handler's params are merged before the next handler runs).
+ * - `cancel`: For "before" hooks only — if true, the operation is aborted.
+ * - `reason`: Optional reason string when cancelling.
+ */
+export type HookHandlerResult<E extends HookEvent = HookEvent> = {
+  message?: string;
+  params?: HookContextMap[E] extends { params: infer P } ? Partial<P> : never;
+  cancel?: boolean;
+  reason?: string;
+} | void;
+
+export type HookHandler<E extends HookEvent = HookEvent> = (ctx: HookContextMap[E]) => Promise<HookHandlerResult<E>>;
+
+/**
+ * Result returned by HookRegistry.emit().
+ * - `messages`: Status messages collected from handlers.
+ * - `cancelled`: True if a "before" handler cancelled the operation.
+ * - `reason`: Reason string from the cancelling handler.
+ * - `params`: For "before" hooks — the final merged params after waterfall processing.
+ */
+export type EmitResult = {
+  messages: string[];
+  cancelled?: boolean;
+  reason?: string;
+  params?: Record<string, unknown>;
+};
 
 export interface HookRegistry {
   on<E extends HookEvent>(event: E, handler: HookHandler<E>, pluginName?: string): void;
   off<E extends HookEvent>(event: E, handler: HookHandler<E>): void;
-  emit<E extends HookEvent>(event: E, ctx: HookContextMap[E]): Promise<string[]>;
+  emit<E extends HookEvent>(event: E, ctx: HookContextMap[E]): Promise<EmitResult>;
   removeAllForPlugin(pluginName: string): void;
 }
 
@@ -119,6 +285,13 @@ export interface ViewRegistry {
   addView(view: PluginViewDefinition): void;
   removeView(name: string): void;
   getViews(): PluginViewDefinition[];
+}
+
+// ── Modal Definition ──
+
+export interface ModalDefinition {
+  id: string;
+  component: React.ComponentType<{ onClose: () => void; currentTask?: Task | null }>;
 }
 
 // ── Extension Registry ──
@@ -159,14 +332,17 @@ export interface ExtensionRegistry {
   addDetailSection(section: DetailSectionDefinition): void;
   addKeybinding(binding: KeybindingDefinition): void;
   addStatusBarItem(item: StatusBarItemDefinition): void;
+  addModal(definition: ModalDefinition): void;
   removeTaskColumn(id: string): void;
   removeDetailSection(id: string): void;
   removeKeybinding(key: string): void;
   removeStatusBarItem(id: string): void;
+  removeModal(id: string): void;
   getTaskColumns(): TaskColumnDefinition[];
   getDetailSections(): DetailSectionDefinition[];
   getKeybindings(): KeybindingDefinition[];
   getStatusBarItems(): StatusBarItemDefinition[];
+  getModals(): ModalDefinition[];
 }
 
 // ── Palette Registry ──
@@ -224,6 +400,7 @@ export type GranularPermission =
   | "labels.read"
   | "labels.write"
   | "sections.read"
+  | "sections.write"
   | "comments.read"
   | "comments.write"
   | "storage";
@@ -244,14 +421,14 @@ export type PluginPermission = GranularPermission | CoarsePermission;
  */
 export const PERMISSION_ALIASES: Record<CoarsePermission, GranularPermission[]> = {
   "read": ["tasks.read", "projects.read", "labels.read", "sections.read", "comments.read"],
-  "write": ["tasks.write", "projects.write", "labels.write", "comments.write"],
+  "write": ["tasks.write", "projects.write", "labels.write", "sections.write", "comments.write"],
   "complete": ["tasks.complete"],
   "delete": ["tasks.delete"],
   "*": [
     "tasks.read", "tasks.write", "tasks.complete", "tasks.delete",
     "projects.read", "projects.write",
     "labels.read", "labels.write",
-    "sections.read",
+    "sections.read", "sections.write",
     "comments.read", "comments.write",
     "storage",
   ],

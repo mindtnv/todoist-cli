@@ -1,9 +1,16 @@
-import type { HookEvent, HookContextMap, HookHandler, HookRegistry } from "./types.ts";
+import type { HookEvent, HookContextMap, HookHandler, HookRegistry, EmitResult } from "./types.ts";
 
 // Internal handler type that accepts any hook context.
 // Type safety is enforced at call sites via the generic HookRegistry interface;
 // internally we must erase the per-event generic to store handlers in a single Map.
-type AnyHookHandler = (ctx: HookContextMap[HookEvent]) => Promise<{ message?: string } | void>;
+type AnyHookHandler = (ctx: HookContextMap[HookEvent]) => Promise<{ message?: string; params?: Record<string, unknown>; cancel?: boolean; reason?: string } | void>;
+
+/** Returns true if the event name represents a "before" hook (ends with "ing"). */
+function isBeforeHook(event: string): boolean {
+  // Match task.creating, task.completing, task.updating, task.deleting,
+  // project.creating, label.updating, comment.deleting, app.unloading, etc.
+  return event.endsWith("ing");
+}
 
 export function createHookRegistry(): HookRegistry {
   const handlers = new Map<HookEvent, Set<AnyHookHandler>>();
@@ -25,20 +32,50 @@ export function createHookRegistry(): HookRegistry {
     handlerPluginMap.delete(castHandler);
   }
 
-  async function emit<E extends HookEvent>(event: E, ctx: HookContextMap[E]): Promise<string[]> {
+  async function emit<E extends HookEvent>(event: E, ctx: HookContextMap[E]): Promise<EmitResult> {
     const messages: string[] = [];
     const eventHandlers = handlers.get(event);
-    if (!eventHandlers) return messages;
+    if (!eventHandlers) return { messages };
+
+    const isBefore = isBeforeHook(event);
+
+    // For "before" hooks, use a mutable copy of the context so handlers
+    // can progressively modify params (waterfall pattern).
+    let currentCtx: HookContextMap[E] = isBefore ? { ...ctx } : ctx;
 
     for (const handler of eventHandlers) {
       try {
-        const result = await handler(ctx);
+        const result = await handler(currentCtx);
         if (result?.message) messages.push(result.message);
+
+        if (isBefore && result) {
+          // Cancellation: stop processing and return immediately
+          if (result.cancel) {
+            return {
+              messages,
+              cancelled: true,
+              reason: result.reason,
+              params: (currentCtx as unknown as Record<string, unknown>).params as Record<string, unknown> | undefined,
+            };
+          }
+
+          // Waterfall: merge returned params into the context for the next handler
+          if (result.params && "params" in currentCtx) {
+            const merged = { ...(currentCtx as unknown as Record<string, unknown>).params as Record<string, unknown>, ...result.params };
+            currentCtx = { ...currentCtx, params: merged } as HookContextMap[E];
+          }
+        }
       } catch (err) {
         console.error(`[plugin-hook] Error in ${event} handler:`, err);
       }
     }
-    return messages;
+
+    // Return the potentially-modified params from the waterfall
+    const emitResult: EmitResult = { messages };
+    if (isBefore && "params" in currentCtx) {
+      emitResult.params = (currentCtx as unknown as Record<string, unknown>).params as Record<string, unknown>;
+    }
+    return emitResult;
   }
 
   function removeAllForPlugin(pluginName: string): void {
