@@ -1,5 +1,5 @@
-import { join } from "path";
-import { existsSync, readFileSync } from "fs";
+import { join, dirname } from "path";
+import { existsSync, readFileSync, symlinkSync, lstatSync, realpathSync } from "fs";
 import type {
   TodoistPlugin, PluginManifest, PluginContext,
   HookRegistry, ViewRegistry, ExtensionRegistry, PaletteRegistry,
@@ -11,6 +11,38 @@ import { createApiProxy } from "./api-proxy.ts";
 import { CONFIG_DIR, getConfig } from "../config/index.ts";
 
 const PLUGINS_DIR = join(CONFIG_DIR, "plugins");
+
+/**
+ * Ensure plugins can resolve shared dependencies (react, ink, etc.)
+ * by symlinking PLUGINS_DIR/node_modules → CLI's node_modules.
+ */
+function ensureSharedDependencies(): void {
+  if (!existsSync(PLUGINS_DIR)) return;
+
+  const target = join(PLUGINS_DIR, "node_modules");
+
+  // Already exists (real dir or valid symlink) — nothing to do
+  if (existsSync(target)) return;
+
+  // Broken symlink — lstat succeeds but existsSync fails
+  try {
+    lstatSync(target);
+    // It's a broken symlink — remove it so we can recreate
+    const { unlinkSync } = require("fs");
+    unlinkSync(target);
+  } catch {
+    // Doesn't exist at all — good, we'll create it
+  }
+
+  try {
+    // Resolve CLI's node_modules via a known dependency
+    const reactPkg = require.resolve("react/package.json");
+    const cliNodeModules = join(dirname(reactPkg), "..");
+    symlinkSync(realpathSync(cliNodeModules), target, "dir");
+  } catch {
+    // Non-fatal: plugins without JSX/shared deps will still work
+  }
+}
 
 function createLogger(pluginName: string): PluginLogger {
   return {
@@ -67,6 +99,8 @@ export async function loadPlugins(
   };
 
   if (!pluginConfigs || !existsSync(PLUGINS_DIR)) return loaded;
+
+  ensureSharedDependencies();
 
   for (const [name, pluginConfig] of Object.entries(pluginConfigs)) {
     if (pluginConfig.enabled === false) continue;
