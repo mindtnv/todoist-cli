@@ -90,25 +90,32 @@ function ensureSharedDependencies(): void {
 
   const target = join(PLUGINS_DIR, "node_modules");
 
-  // Valid symlink or real directory — nothing to do
-  if (existsSync(target)) return;
+  let cliNodeModules: string;
+  try {
+    const reactPkg = require.resolve("react/package.json");
+    cliNodeModules = realpathSync(join(dirname(reactPkg), ".."));
+  } catch {
+    return; // Non-fatal: plugins that don't need host deps will still work
+  }
 
-  // Broken symlink (target moved): lstat succeeds but existsSync fails
+  // If a symlink already exists, verify it points to the CURRENT CLI's
+  // node_modules. Different CLIs (dev vs npm) share the same PLUGINS_DIR,
+  // so a stale symlink from a previous run would cause duplicate React.
   try {
     if (lstatSync(target).isSymbolicLink()) {
-      unlinkSync(target);
+      if (realpathSync(target) === cliNodeModules) return; // Correct target
+      unlinkSync(target); // Stale — recreate below
+    } else {
+      return; // Real directory — don't touch
     }
   } catch {
     // Doesn't exist at all — proceed to create
   }
 
   try {
-    // Derive CLI's node_modules from a known dependency
-    const reactPkg = require.resolve("react/package.json");
-    const cliNodeModules = realpathSync(join(dirname(reactPkg), ".."));
     symlinkSync(cliNodeModules, target);
   } catch {
-    // Non-fatal: plugins that don't need host deps will still work
+    // Non-fatal
   }
 }
 
