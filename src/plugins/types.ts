@@ -391,67 +391,28 @@ export interface PaletteRegistry {
   getCommands(): PaletteCommandDefinition[];
 }
 
+// ── Plugin Registries (passed to register()) ──
+
+export interface PluginRegistries {
+  hooks: HookRegistry;
+  views: ViewRegistry;
+  extensions: ExtensionRegistry;
+  palette: PaletteRegistry;
+}
+
 // ── Plugin Interface ──
 
 export interface TodoistPlugin {
   name: string;
-  version: string;
+  version?: string;
   description?: string;
+  /** Register hooks, views, extensions, palette commands — all in one call */
+  register?(registries: PluginRegistries): void;
+  /** CLI-only: register Commander.js subcommands */
   registerCommands?(program: CliCommand, ctx: PluginContext): void;
-  registerViews?(registry: ViewRegistry): void;
-  registerHooks?(hooks: HookRegistry): void;
-  registerExtensions?(extensions: ExtensionRegistry): void;
-  registerPaletteCommands?(palette: PaletteRegistry): void;
   onLoad?(ctx: PluginContext): Promise<void>;
   onUnload?(ctx: PluginContext): Promise<void>;
 }
-
-// ── Plugin Permissions ──
-
-/** Granular permission strings for plugin capabilities */
-export type GranularPermission =
-  | "tasks.read"
-  | "tasks.write"
-  | "tasks.complete"
-  | "tasks.delete"
-  | "projects.read"
-  | "projects.write"
-  | "labels.read"
-  | "labels.write"
-  | "sections.read"
-  | "sections.write"
-  | "comments.read"
-  | "comments.write"
-  | "storage";
-
-/** Backward-compatible coarse permission aliases */
-export type CoarsePermission =
-  | "read"       // = all *.read
-  | "write"      // = all *.write
-  | "complete"   // = tasks.complete
-  | "delete"     // = tasks.delete
-  | "*";          // = all permissions
-
-export type PluginPermission = GranularPermission | CoarsePermission;
-
-/**
- * Maps coarse permissions to the granular permissions they expand to.
- * Used by the permission checker to resolve backward-compat aliases.
- */
-export const PERMISSION_ALIASES: Record<CoarsePermission, GranularPermission[]> = {
-  "read": ["tasks.read", "projects.read", "labels.read", "sections.read", "comments.read"],
-  "write": ["tasks.write", "projects.write", "labels.write", "sections.write", "comments.write"],
-  "complete": ["tasks.complete"],
-  "delete": ["tasks.delete"],
-  "*": [
-    "tasks.read", "tasks.write", "tasks.complete", "tasks.delete",
-    "projects.read", "projects.write",
-    "labels.read", "labels.write",
-    "sections.read", "sections.write",
-    "comments.read", "comments.write",
-    "storage",
-  ],
-};
 
 // ── Plugin Manifest (plugin.json) ──
 
@@ -461,9 +422,7 @@ export interface PluginManifest {
   description?: string;
   main: string;
   author?: string;
-  source?: string;
   engines?: { "todoist-cli"?: string };
-  permissions?: PluginPermission[];
 }
 
 // ── Plugin Config (in config.toml) ──

@@ -10,12 +10,6 @@ export interface MarketplacePluginEntry {
   source: string | MarketplaceExternalSource;
   version?: string;
   description?: string;
-  author?: string;
-  category?: string;
-  keywords?: string[];
-  homepage?: string;
-  repository?: string;
-  license?: string;
 }
 
 export interface MarketplaceExternalSource {

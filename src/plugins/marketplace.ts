@@ -371,15 +371,26 @@ export async function installPlugin(
     }
   }
 
+  // Read actual version from installed plugin's plugin.json (source of truth)
+  let installedVersion = plugin.version ?? "unknown";
+  const installedManifestPath = join(targetDir, "plugin.json");
+  if (existsSync(installedManifestPath)) {
+    try {
+      const installedManifest = JSON.parse(readFileSync(installedManifestPath, "utf-8"));
+      if (installedManifest.version) installedVersion = installedManifest.version;
+    } catch { /* use marketplace version as fallback */ }
+  }
+
   // Register in config
   setPluginEntry(pluginName, {
     source: `${pluginName}@${plugin.marketplace}`,
     enabled: true,
+    version: installedVersion,
   });
 
   return {
     name: pluginName,
-    version: plugin.version ?? "unknown",
+    version: installedVersion,
     marketplace: plugin.marketplace,
     description: plugin.description,
   };

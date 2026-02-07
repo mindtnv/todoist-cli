@@ -1,4 +1,4 @@
-import type { TodoistPlugin, PluginContext } from "../../../src/plugins/types.ts";
+import type { TodoistPlugin, PluginContext, PluginRegistries } from "../../../src/plugins/types.ts";
 import { TimerService } from "./timer.ts";
 import { formatDuration, formatDurationShort, parseDurationInput } from "./format.ts";
 import { registerTimeCommands } from "./cli/commands.ts";
@@ -27,8 +27,9 @@ const plugin: TodoistPlugin = {
     await timer.restoreState();
   },
 
-  registerHooks(hooks) {
-    // Auto-stop timer when task is completed (running or paused)
+  register({ hooks, views, extensions, palette }: PluginRegistries) {
+    // ── Hooks ──
+
     hooks.on("task.completing", async (hookCtx) => {
       if (!timer) return;
       if (hookCtx.task && (timer.isRunningSync(hookCtx.task.id) || timer.isPausedSync(hookCtx.task.id))) {
@@ -37,18 +38,26 @@ const plugin: TodoistPlugin = {
       }
     });
 
-    // Auto-stop timer when task is deleted (running or paused)
     hooks.on("task.deleting", async (hookCtx) => {
       if (!timer) return;
       if (hookCtx.task && (timer.isRunningSync(hookCtx.task.id) || timer.isPausedSync(hookCtx.task.id))) {
         await timer.stop(hookCtx.task.id);
       }
     });
-  },
 
-  registerExtensions(ext) {
-    // Timer column in TaskRow
-    ext.addTaskColumn({
+    // ── Views ──
+
+    views.addView({
+      name: "time-report",
+      label: "Time Report",
+      component: TimeReportView,
+      sidebar: { icon: "◷", section: "plugins" },
+      shortcut: "T",
+    });
+
+    // ── Extensions ──
+
+    extensions.addTaskColumn({
       id: "timer",
       label: "Time",
       width: 10,
@@ -74,8 +83,7 @@ const plugin: TodoistPlugin = {
       },
     });
 
-    // Status bar item showing active timer
-    ext.addStatusBarItem({
+    extensions.addStatusBarItem({
       id: "active-timer",
       refreshInterval: 1000,
       render: () => timer ? timer.getActiveFormatted() : "",
@@ -87,16 +95,14 @@ const plugin: TodoistPlugin = {
       },
     });
 
-    // Time log section in task detail view
-    ext.addDetailSection({
+    extensions.addDetailSection({
       id: "time-log",
       label: "Time Log",
       position: "after-comments",
       component: TimeLogSection,
     });
 
-    // Ctrl+T keybinding to cycle timer: stopped -> start, running -> pause, paused -> stop
-    ext.addKeybinding({
+    extensions.addKeybinding({
       key: "ctrl+t",
       description: "Start/pause/stop timer",
       helpSection: "Time Tracking",
@@ -114,23 +120,9 @@ const plugin: TodoistPlugin = {
         }
       },
     });
-  },
 
-  registerCommands(program, _ctx) {
-    if (timer) registerTimeCommands(program, timer);
-  },
+    // ── Palette Commands ──
 
-  registerViews(registry) {
-    registry.addView({
-      name: "time-report",
-      label: "Time Report",
-      component: TimeReportView,
-      sidebar: { icon: "◷", section: "plugins" },
-      shortcut: "T",
-    });
-  },
-
-  registerPaletteCommands(palette) {
     palette.addCommands([
       {
         label: "Start Timer",
@@ -180,6 +172,10 @@ const plugin: TodoistPlugin = {
         action: (_, __, navigate) => navigate("time-report"),
       },
     ]);
+  },
+
+  registerCommands(program, _ctx) {
+    if (timer) registerTimeCommands(program, timer);
   },
 
   async onUnload() {

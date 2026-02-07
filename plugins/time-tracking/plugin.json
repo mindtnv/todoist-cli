@@ -3,6 +3,5 @@
   "version": "1.0.0",
   "description": "Track time spent on tasks",
   "main": "./src/index.ts",
-  "author": "todoist-cli",
-  "permissions": ["tasks.read", "tasks.hooks", "storage", "ui.taskRow", "ui.views", "ui.palette"]
+  "author": "todoist-cli"
 }

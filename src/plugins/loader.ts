@@ -3,7 +3,7 @@ import { existsSync, readFileSync, symlinkSync, lstatSync, unlinkSync, realpathS
 import type {
   TodoistPlugin, PluginManifest, PluginContext,
   HookRegistry, ViewRegistry, ExtensionRegistry, PaletteRegistry,
-  PluginConfigEntry, PluginLogger,
+  PluginConfigEntry, PluginLogger, PluginRegistries,
 } from "./types.ts";
 import { createPluginStorage } from "./storage.ts";
 import type { PluginStorageWithClose } from "./storage.ts";
@@ -183,81 +183,45 @@ function createLogger(pluginName: string): PluginLogger {
 
 /**
  * Topological sort of plugin entries based on their `after` field.
- * Uses Kahn's algorithm. If plugin B has `after: "A"`, A is loaded before B.
- *
- * - If `after` references a non-existent plugin, logs a warning and ignores the dependency.
- * - If a circular dependency is detected, logs a warning and falls back to the original order.
+ * If plugin B has `after: "A"`, A is loaded before B.
+ * Falls back to original order on circular dependencies.
  */
 function topologicalSort(
   entries: Array<[string, PluginConfigEntry]>,
 ): Array<[string, PluginConfigEntry]> {
+  if (!entries.some(([, c]) => c.after)) return entries;
+
   const nameSet = new Set(entries.map(([name]) => name));
-  const entryMap = new Map(entries.map(([name, config]) => [name, config]));
+  const remaining = new Map(entries);
+  const added = new Set<string>();
+  const result: Array<[string, PluginConfigEntry]> = [];
 
-  // Build adjacency list and in-degree count
-  // Edge: after -> name (after must come before name)
-  const inDegree = new Map<string, number>();
-  const dependents = new Map<string, string[]>(); // dep -> list of plugins that depend on it
-
-  for (const [name] of entries) {
-    inDegree.set(name, 0);
-    dependents.set(name, []);
-  }
-
-  let hasDependencies = false;
-
+  // Warn about unknown dependencies
   for (const [name, config] of entries) {
-    const after = config.after;
-    if (!after) continue;
-
-    if (!nameSet.has(after)) {
-      log.warn(
-        `Plugin "${name}" declares after: "${after}", but "${after}" is not a known plugin. Ignoring dependency.`
-      );
-      continue;
+    if (config.after && !nameSet.has(config.after)) {
+      log.warn(`Plugin "${name}" declares after: "${config.after}", but "${config.after}" is not known. Ignoring.`);
     }
-
-    hasDependencies = true;
-    inDegree.set(name, (inDegree.get(name) ?? 0) + 1);
-    dependents.get(after)!.push(name);
   }
 
-  // If no dependencies exist, skip sorting and return original order
-  if (!hasDependencies) return entries;
-
-  // Kahn's algorithm
-  const queue: string[] = [];
-  for (const [name, degree] of inDegree) {
-    if (degree === 0) queue.push(name);
-  }
-
-  const sorted: string[] = [];
-
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    sorted.push(current);
-
-    for (const dependent of dependents.get(current) ?? []) {
-      const newDegree = (inDegree.get(dependent) ?? 1) - 1;
-      inDegree.set(dependent, newDegree);
-      if (newDegree === 0) {
-        queue.push(dependent);
+  while (remaining.size > 0) {
+    let progress = false;
+    for (const [name, config] of remaining) {
+      if (!config.after || added.has(config.after) || !nameSet.has(config.after)) {
+        result.push([name, config]);
+        added.add(name);
+        remaining.delete(name);
+        progress = true;
       }
     }
+    if (!progress) {
+      const circular = [...remaining.keys()];
+      log.warn(`Circular dependency among: ${circular.join(", ")}. Using original order.`);
+      for (const [name, config] of remaining) result.push([name, config]);
+      break;
+    }
   }
 
-  if (sorted.length !== entries.length) {
-    // Circular dependency detected — fall back to original order
-    const unsorted = entries
-      .filter(([name]) => !sorted.includes(name))
-      .map(([name]) => name);
-    log.warn(
-      `Circular dependency detected among plugins: ${unsorted.join(", ")}. Falling back to original order.`
-    );
-    return entries;
-  }
-
-  return sorted.map((name) => [name, entryMap.get(name)!] as [string, PluginConfigEntry]);
+  return result;
 }
 
 // ── Context Tracking ────────────────────────────────────────────────
@@ -366,6 +330,16 @@ function trackingPaletteRegistry(
       for (const label of labels) tracker.untrack("palette", label);
     },
     getCommands: () => palette.getCommands(),
+  };
+}
+
+/** Creates a HookRegistry wrapper that auto-tags the plugin name on every on() call */
+function trackingHookRegistry(hooks: HookRegistry, pluginName: string): HookRegistry {
+  return {
+    on(event, handler, name) { hooks.on(event, handler, name ?? pluginName); },
+    off: hooks.off.bind(hooks),
+    emit: hooks.emit.bind(hooks),
+    removeAllForPlugin: hooks.removeAllForPlugin.bind(hooks),
   };
 }
 
@@ -483,7 +457,7 @@ export async function loadPlugins(
       const dataDir = join(pluginDir, "data");
       const storage = createPluginStorage(dataDir);
       storages.push(storage);
-      const api = createApiProxy(hooks, manifest?.permissions);
+      const api = createApiProxy(hooks);
       const pluginLog = createLogger(plugin.name);
 
       // Strip internal loader keys from config before passing to plugin
@@ -497,19 +471,19 @@ export async function loadPlugins(
       };
 
       if (plugin.onLoad) await plugin.onLoad(ctx);
-      if (plugin.registerHooks) plugin.registerHooks(hooks);
-      if (plugin.registerViews) {
-        plugin.registerViews(trackingViewRegistry(views, tracker, ctx));
-      }
-      if (plugin.registerExtensions) {
-        plugin.registerExtensions(trackingExtensionRegistry(extensions, tracker, ctx));
-      }
-      if (plugin.registerPaletteCommands) {
-        plugin.registerPaletteCommands(trackingPaletteRegistry(palette, tracker, ctx));
+      if (plugin.register) {
+        const registries: PluginRegistries = {
+          hooks: trackingHookRegistry(hooks, plugin.name),
+          views: trackingViewRegistry(views, tracker, ctx),
+          extensions: trackingExtensionRegistry(extensions, tracker, ctx),
+          palette: trackingPaletteRegistry(palette, tracker, ctx),
+        };
+        plugin.register(registries);
       }
 
       loaded.plugins.push({ plugin, ctx });
-      log.info(`Loaded plugin "${name}" v${plugin.version}`);
+      const displayVersion = manifest?.version ?? plugin.version ?? "?";
+      log.info(`Loaded plugin "${name}" v${displayVersion}`);
     } catch (err) {
       log.error(`Failed to load "${name}": ${err instanceof Error ? err.message : err}`, err);
     }
