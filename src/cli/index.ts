@@ -117,7 +117,7 @@ async function runWithWatch(interval: number, fn: () => Promise<void>): Promise<
 program
   .name("todoist")
   .description("CLI tool for managing Todoist tasks")
-  .version("0.3.1")
+  .version("0.4.0")
   .option("--debug", "Enable debug output")
   .hook("preAction", () => {
     if (program.opts().debug) {
