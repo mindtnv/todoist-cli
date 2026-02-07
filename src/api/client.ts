@@ -2,6 +2,15 @@ import { requireToken } from "../config/index.ts";
 
 const BASE_URL = "https://api.todoist.com/api/v1";
 
+/** Remove keys with undefined values from an object before sending to the API. */
+export function stripUndefined(obj: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) result[key] = value;
+  }
+  return result;
+}
+
 const MAX_RETRIES = 3;
 const BASE_BACKOFF_MS = 1000;
 const RATE_LIMIT_BASE_BACKOFF_MS = 5000;
@@ -68,13 +77,21 @@ class TodoistClient {
     return this.handleResponse<T>(res);
   }
 
+  async patch<T>(path: string, body?: Record<string, unknown>): Promise<T> {
+    const res = await this.fetchWithRetry(`${BASE_URL}${path}`, {
+      method: "PATCH",
+      headers: this.headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    return this.handleResponse<T>(res);
+  }
+
   async del(path: string): Promise<void> {
     const res = await this.fetchWithRetry(`${BASE_URL}${path}`, {
       method: "DELETE",
       headers: this.headers,
     });
     if (!res.ok) await this.throwError(res);
-    await res.text();
   }
 
   /**

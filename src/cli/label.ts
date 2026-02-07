@@ -5,6 +5,7 @@ import { handleError } from "../utils/errors.ts";
 import { cliExit } from "../utils/exit.ts";
 import { ID_WIDTH } from "../utils/format.ts";
 import { saveLastList, resolveLabelArg } from "../utils/resolve.ts";
+import { printJsonFields } from "../utils/json-output.ts";
 
 const NAME_WIDTH = 25;
 const COLOR_WIDTH = 12;
@@ -29,15 +30,7 @@ export function registerLabelCommand(program: Command): void {
         }
 
         if (opts.json !== undefined) {
-          const fields = opts.json.split(",").map((f) => f.trim());
-          const data = labels.map((l) => {
-            const obj: Record<string, unknown> = {};
-            for (const f of fields) {
-              if (f in l) obj[f] = (l as unknown as Record<string, unknown>)[f];
-            }
-            return obj;
-          });
-          console.log(JSON.stringify(data, null, 2));
+          printJsonFields(labels as unknown as Record<string, unknown>[], opts.json);
           return;
         }
 

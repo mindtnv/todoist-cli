@@ -7,7 +7,7 @@ import {
   rmSync,
   cpSync,
 } from "fs";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { getConfig, saveConfig, setPluginEntry, removePluginEntry } from "../config/index.ts";
 import type {
   MarketplaceManifest,
@@ -153,14 +153,15 @@ export async function fetchMarketplaceManifest(
     if (existsSync(cacheDir)) {
       // Pull latest
       try {
-        execSync(`git -C "${cacheDir}" pull`, { stdio: "pipe" });
+        execFileSync("git", ["-C", cacheDir, "pull"], { stdio: "pipe" });
       } catch {
         // If pull fails (e.g. network), use cached version
       }
     } else {
       // Clone
-      execSync(
-        `git clone https://github.com/${github.user}/${github.repo}.git "${cacheDir}"`,
+      execFileSync(
+        "git",
+        ["clone", `https://github.com/${github.user}/${github.repo}.git`, cacheDir],
         { stdio: "pipe" },
       );
     }
@@ -286,8 +287,9 @@ export async function installPlugin(
     } else if (source.startsWith("github:")) {
       const github = parseGitHubSource(source);
       if (!github) throw new Error(`Invalid GitHub source: ${source}`);
-      execSync(
-        `git clone https://github.com/${github.user}/${github.repo}.git "${targetDir}"`,
+      execFileSync(
+        "git",
+        ["clone", `https://github.com/${github.user}/${github.repo}.git`, targetDir],
         { stdio: "pipe" },
       );
     } else {
@@ -303,12 +305,14 @@ export async function installPlugin(
   // Install dependencies if package.json exists
   if (existsSync(join(targetDir, "package.json"))) {
     try {
-      execSync(`cd "${targetDir}" && bun install`, { stdio: "pipe" });
+      execFileSync("bun", ["install"], { cwd: targetDir, stdio: "pipe" });
     } catch {
       try {
-        execSync(`cd "${targetDir}" && npm install`, { stdio: "pipe" });
+        execFileSync("npm", ["install"], { cwd: targetDir, stdio: "pipe" });
       } catch {
-        // Dependencies installation failed, but plugin files are in place
+        console.warn(
+          `Warning: Failed to install dependencies for plugin "${pluginName}". The plugin may not work correctly.`,
+        );
       }
     }
   }
@@ -334,13 +338,12 @@ function resolveExternalSource(
   switch (source.type) {
     case "github": {
       if (!source.repo) throw new Error("GitHub source requires a 'repo' field.");
-      const ref = source.ref ? ` --branch ${source.ref}` : "";
-      execSync(
-        `git clone https://github.com/${source.repo}.git${ref} "${targetDir}"`,
-        { stdio: "pipe" },
-      );
+      const cloneArgs = ["clone"];
+      if (source.ref) cloneArgs.push("--branch", source.ref);
+      cloneArgs.push(`https://github.com/${source.repo}.git`, targetDir);
+      execFileSync("git", cloneArgs, { stdio: "pipe" });
       if (source.sha) {
-        execSync(`git -C "${targetDir}" checkout ${source.sha}`, {
+        execFileSync("git", ["-C", targetDir, "checkout", source.sha], {
           stdio: "pipe",
         });
       }
@@ -348,12 +351,12 @@ function resolveExternalSource(
     }
     case "git": {
       if (!source.url) throw new Error("Git source requires a 'url' field.");
-      const ref = source.ref ? ` --branch ${source.ref}` : "";
-      execSync(`git clone ${source.url}${ref} "${targetDir}"`, {
-        stdio: "pipe",
-      });
+      const gitCloneArgs = ["clone"];
+      if (source.ref) gitCloneArgs.push("--branch", source.ref);
+      gitCloneArgs.push(source.url, targetDir);
+      execFileSync("git", gitCloneArgs, { stdio: "pipe" });
       if (source.sha) {
-        execSync(`git -C "${targetDir}" checkout ${source.sha}`, {
+        execFileSync("git", ["-C", targetDir, "checkout", source.sha], {
           stdio: "pipe",
         });
       }
@@ -362,10 +365,8 @@ function resolveExternalSource(
     case "npm": {
       if (!source.package) throw new Error("npm source requires a 'package' field.");
       mkdirSync(targetDir, { recursive: true });
-      execSync(
-        `cd "${targetDir}" && npm init -y && npm install ${source.package}`,
-        { stdio: "pipe" },
-      );
+      execFileSync("npm", ["init", "-y"], { cwd: targetDir, stdio: "pipe" });
+      execFileSync("npm", ["install", source.package], { cwd: targetDir, stdio: "pipe" });
       break;
     }
     default:
@@ -438,7 +439,7 @@ export async function updatePlugin(name: string): Promise<UpdateResult> {
   if (isExternalSource(pluginManifest.source)) {
     // For external sources with github type, git pull
     if (pluginManifest.source.type === "github" && existsSync(join(targetDir, ".git"))) {
-      execSync(`git -C "${targetDir}" pull`, { stdio: "pipe" });
+      execFileSync("git", ["-C", targetDir, "pull"], { stdio: "pipe" });
     } else {
       // Re-install: remove and clone again
       if (existsSync(targetDir)) {
@@ -459,19 +460,21 @@ export async function updatePlugin(name: string): Promise<UpdateResult> {
       ensureDir(targetDir);
       cpSync(sourcePath, targetDir, { recursive: true });
     } else if (existsSync(join(targetDir, ".git"))) {
-      execSync(`git -C "${targetDir}" pull`, { stdio: "pipe" });
+      execFileSync("git", ["-C", targetDir, "pull"], { stdio: "pipe" });
     }
   }
 
   // Re-install dependencies if needed
   if (existsSync(join(targetDir, "package.json"))) {
     try {
-      execSync(`cd "${targetDir}" && bun install`, { stdio: "pipe" });
+      execFileSync("bun", ["install"], { cwd: targetDir, stdio: "pipe" });
     } catch {
       try {
-        execSync(`cd "${targetDir}" && npm install`, { stdio: "pipe" });
+        execFileSync("npm", ["install"], { cwd: targetDir, stdio: "pipe" });
       } catch {
-        // Best effort
+        console.warn(
+          `Warning: Failed to install dependencies for plugin "${name}". The plugin may not work correctly.`,
+        );
       }
     }
   }
@@ -533,14 +536,15 @@ export async function refreshMarketplaceCache(name?: string): Promise<void> {
 
     if (existsSync(cacheDir)) {
       try {
-        execSync(`git -C "${cacheDir}" pull`, { stdio: "pipe" });
+        execFileSync("git", ["-C", cacheDir, "pull"], { stdio: "pipe" });
       } catch {
         // Network error — use existing cache
       }
     } else {
       try {
-        execSync(
-          `git clone https://github.com/${github.user}/${github.repo}.git "${cacheDir}"`,
+        execFileSync(
+          "git",
+          ["clone", `https://github.com/${github.user}/${github.repo}.git`, cacheDir],
           { stdio: "pipe" },
         );
       } catch {

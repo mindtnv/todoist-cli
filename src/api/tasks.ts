@@ -1,4 +1,4 @@
-import { api } from "./client.ts";
+import { api, stripUndefined } from "./client.ts";
 import type { Task, TaskFilter, CreateTaskParams, UpdateTaskParams } from "./types.ts";
 
 export async function getTasks(filter?: TaskFilter): Promise<Task[]> {
@@ -14,11 +14,11 @@ export async function getTask(id: string): Promise<Task> {
 }
 
 export async function createTask(params: CreateTaskParams): Promise<Task> {
-  return api.post<Task>("/tasks", params as unknown as Record<string, unknown>);
+  return api.post<Task>("/tasks", stripUndefined(params as unknown as Record<string, unknown>));
 }
 
 export async function updateTask(id: string, params: UpdateTaskParams): Promise<Task> {
-  return api.post<Task>(`/tasks/${id}`, params as unknown as Record<string, unknown>);
+  return api.patch<Task>(`/tasks/${id}`, stripUndefined(params as Record<string, unknown>));
 }
 
 export async function closeTask(id: string): Promise<void> {

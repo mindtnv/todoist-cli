@@ -9,7 +9,7 @@ import { registerUpdateCommand } from "./update.ts";
 import { registerMoveCommand } from "./move.ts";
 
 // Re-export helpers used by index.ts
-export { printTaskTable, pickFields, groupByDate } from "./helpers.ts";
+export { printTaskTable, groupByDate } from "./helpers.ts";
 
 export function registerTaskCommand(program: Command): void {
   const task = program

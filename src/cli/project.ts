@@ -7,6 +7,7 @@ import { handleError } from "../utils/errors.ts";
 import { cliExit } from "../utils/exit.ts";
 import { ID_WIDTH } from "../utils/format.ts";
 import { saveLastList, resolveProjectArg } from "../utils/resolve.ts";
+import { printJsonFields } from "../utils/json-output.ts";
 
 const NAME_WIDTH = 30;
 const COLOR_WIDTH = 12;
@@ -31,15 +32,7 @@ export function registerProjectCommand(program: Command): void {
         }
 
         if (opts.json !== undefined) {
-          const fields = opts.json.split(",").map((f) => f.trim());
-          const data = projects.map((p) => {
-            const obj: Record<string, unknown> = {};
-            for (const f of fields) {
-              if (f in p) obj[f] = (p as unknown as Record<string, unknown>)[f];
-            }
-            return obj;
-          });
-          console.log(JSON.stringify(data, null, 2));
+          printJsonFields(projects as unknown as Record<string, unknown>[], opts.json);
           return;
         }
 

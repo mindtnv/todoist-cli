@@ -11,6 +11,7 @@ import { EditTaskModal } from "../components/EditTaskModal.tsx";
 import { ProjectPicker } from "../components/ProjectPicker.tsx";
 import { LabelPicker } from "../components/LabelPicker.tsx";
 import type { DetailSectionDefinition, PluginContext, HookRegistry } from "../../plugins/types.ts";
+import { PRIORITY_LABELS, PRIORITY_COLORS } from "../constants.ts";
 
 interface TaskDetailViewProps {
   task: Task;
@@ -24,12 +25,6 @@ interface TaskDetailViewProps {
   pluginHooks?: HookRegistry | null;
 }
 
-const priorityLabels: Record<number, { label: string; color: string }> = {
-  4: { label: "P4 (Urgent)", color: "red" },
-  3: { label: "P3 (High)", color: "yellow" },
-  2: { label: "P2 (Medium)", color: "blue" },
-  1: { label: "P1 (Normal)", color: "white" },
-};
 
 export function TaskDetailView({ task, allTasks, projects, labels, onBack, onTaskChanged, pluginSections, pluginSectionContextMap, pluginHooks }: TaskDetailViewProps) {
   const [comments, setComments] = useState<Comment[]>([]);
@@ -279,7 +274,8 @@ export function TaskDetailView({ task, allTasks, projects, labels, onBack, onTas
   });
 
   const project = projects.find((p) => p.id === task.project_id);
-  const prio = priorityLabels[task.priority] ?? { label: "Unknown", color: "white" };
+  const prioLabel = PRIORITY_LABELS[task.priority] ?? "p?";
+  const prioColor = PRIORITY_COLORS[task.priority] ?? "white";
 
   return (
     <Box flexDirection="column" width="100%" height="100%">
@@ -304,7 +300,7 @@ export function TaskDetailView({ task, allTasks, projects, labels, onBack, onTas
         <Box flexDirection="column" marginBottom={1}>
           <Box>
             <Box width={14}><Text color="gray">Priority:</Text></Box>
-            <Text color={prio.color}>{prio.label}</Text>
+            <Text color={prioColor}>{prioLabel}</Text>
           </Box>
           <Box>
             <Box width={14}><Text color="gray">Project:</Text></Box>
@@ -344,7 +340,7 @@ export function TaskDetailView({ task, allTasks, projects, labels, onBack, onTas
             <Text bold color="green">Subtasks ({subtasks.length})</Text>
             {subtasks.map((sub) => {
               const subCheckbox = sub.is_completed ? "\u2611" : "\u2610";
-              const subPrioColor = priorityLabels[sub.priority]?.color ?? "white";
+              const subPrioColor = PRIORITY_COLORS[sub.priority] ?? "white";
               return (
                 <Box key={sub.id}>
                   <Text>

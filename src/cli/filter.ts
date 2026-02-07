@@ -5,6 +5,7 @@ import { getTasks } from "../api/tasks.ts";
 import { printTaskTable } from "./commands/task/index.ts";
 import { handleError } from "../utils/errors.ts";
 import { cliExit } from "../utils/exit.ts";
+import { printJsonFields } from "../utils/json-output.ts";
 
 export function registerFilterCommand(program: Command): void {
   const filter = program
@@ -87,15 +88,7 @@ export function registerFilterCommand(program: Command): void {
         }
 
         if (opts.json !== undefined) {
-          const fields = opts.json.split(",").map(f => f.trim());
-          const data = tasks.map(t => {
-            const obj: Record<string, unknown> = {};
-            for (const f of fields) {
-              if (f in t) obj[f] = (t as unknown as Record<string, unknown>)[f];
-            }
-            return obj;
-          });
-          console.log(JSON.stringify(data, null, 2));
+          printJsonFields(tasks as unknown as Record<string, unknown>[], opts.json);
           return;
         }
 

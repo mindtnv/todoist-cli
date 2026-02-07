@@ -2,6 +2,7 @@ import type { Command } from "commander";
 import chalk from "chalk";
 import { getTasks } from "../../../api/tasks.ts";
 import { formatTasksDelimited } from "../../../utils/output.ts";
+import { printJsonFields } from "../../../utils/json-output.ts";
 import { handleError } from "../../../utils/errors.ts";
 import { cliExit } from "../../../utils/exit.ts";
 import {
@@ -96,14 +97,13 @@ export function registerListCommand(task: Command): void {
 
         // JSON output
         if (opts.json !== undefined) {
-          const fields = opts.json.split(",").map((f) => f.trim());
-          const data = pickFields(tasks, fields);
-
           if (opts.jq) {
+            const fields = opts.json.split(",").map((f) => f.trim());
+            const data = pickFields(tasks, fields);
             const result = applyJq(data, opts.jq);
             console.log(JSON.stringify(result, null, 2));
           } else {
-            console.log(JSON.stringify(data, null, 2));
+            printJsonFields(tasks as unknown as Record<string, unknown>[], opts.json);
           }
           return;
         }

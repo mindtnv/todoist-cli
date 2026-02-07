@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 import { program } from "commander";
 import chalk from "chalk";
-import { registerTaskCommand, printTaskTable, groupByDate, pickFields } from "./commands/task/index.ts";
+import { registerTaskCommand, printTaskTable, groupByDate } from "./commands/task/index.ts";
+import { printJsonFields } from "../utils/json-output.ts";
 import { registerProjectCommand } from "./project.ts";
 import { registerLabelCommand } from "./label.ts";
 import { registerCommentCommand } from "./comment.ts";
@@ -161,8 +162,7 @@ program
       if (opts.quiet) { for (const t of tasks) console.log(t.id); return; }
       if (opts.csv || opts.tsv) { console.log(formatTasksDelimited(tasks, opts.tsv ? "\t" : ",")); return; }
       if (opts.json !== undefined) {
-        const fields = opts.json.split(",").map((f) => f.trim());
-        console.log(JSON.stringify(pickFields(tasks, fields), null, 2));
+        printJsonFields(tasks as unknown as Record<string, unknown>[], opts.json);
         return;
       }
 
@@ -197,8 +197,7 @@ program
       if (opts.quiet) { for (const t of tasks) console.log(t.id); return; }
       if (opts.csv || opts.tsv) { console.log(formatTasksDelimited(tasks, opts.tsv ? "\t" : ",")); return; }
       if (opts.json !== undefined) {
-        const fields = opts.json.split(",").map((f) => f.trim());
-        console.log(JSON.stringify(pickFields(tasks, fields), null, 2));
+        printJsonFields(tasks as unknown as Record<string, unknown>[], opts.json);
         return;
       }
 
@@ -581,15 +580,7 @@ for (const [name, query] of Object.entries(savedFilters)) {
         if (opts.quiet) { for (const t of tasks) console.log(t.id); return; }
         if (opts.csv || opts.tsv) { console.log(formatTasksDelimited(tasks, opts.tsv ? "\t" : ",")); return; }
         if (opts.json !== undefined) {
-          const fields = opts.json.split(",").map(f => f.trim());
-          const data = tasks.map((t) => {
-            const obj: Record<string, unknown> = {};
-            for (const f of fields) {
-              if (f in t) obj[f] = (t as unknown as Record<string, unknown>)[f];
-            }
-            return obj;
-          });
-          console.log(JSON.stringify(data, null, 2));
+          printJsonFields(tasks as unknown as Record<string, unknown>[], opts.json);
           return;
         }
         console.log(chalk.bold(name) + chalk.dim(` (${query})`));

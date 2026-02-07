@@ -1,4 +1,4 @@
-import React from "react";
+import React, { memo } from "react";
 import { Box, Text } from "ink";
 import type { Task } from "../../api/types.ts";
 import type { TaskColumnDefinition, PluginContext } from "../../plugins/types.ts";
@@ -39,7 +39,7 @@ const priorityConfig: Record<number, { dot: string; color: string }> = {
   1: { dot: "\u25CB", color: "gray" },
 };
 
-export function TaskRow({ task, isSelected, isMarked = false, depth = 0, searchQuery, pluginColumns, pluginColumnContextMap }: TaskRowProps) {
+function TaskRowInner({ task, isSelected, isMarked = false, depth = 0, searchQuery, pluginColumns, pluginColumnContextMap }: TaskRowProps) {
   const checkbox = task.is_completed ? "\u2611" : "\u2610";
   const prio = priorityConfig[task.priority] ?? { dot: "\u25CB", color: "gray" };
   const dueInfo = task.due ? formatRelativeDue(task.due.date) : null;
@@ -103,3 +103,38 @@ export function TaskRow({ task, isSelected, isMarked = false, depth = 0, searchQ
     </Box>
   );
 }
+
+function arePropsEqual(prev: TaskRowProps, next: TaskRowProps): boolean {
+  if (prev.task.id !== next.task.id) return false;
+  if (prev.task.content !== next.task.content) return false;
+  if (prev.task.priority !== next.task.priority) return false;
+  if (prev.isSelected !== next.isSelected) return false;
+  if (prev.isMarked !== next.isMarked) return false;
+  if ((prev.depth ?? 0) !== (next.depth ?? 0)) return false;
+
+  // Compare due
+  const prevDue = prev.task.due;
+  const nextDue = next.task.due;
+  if (prevDue?.date !== nextDue?.date || prevDue?.is_recurring !== nextDue?.is_recurring) return false;
+
+  // Compare deadline
+  if (prev.task.deadline?.date !== next.task.deadline?.date) return false;
+
+  // Compare labels (array of strings)
+  const prevLabels = prev.task.labels;
+  const nextLabels = next.task.labels;
+  if (prevLabels.length !== nextLabels.length) return false;
+  for (let i = 0; i < prevLabels.length; i++) {
+    if (prevLabels[i] !== nextLabels[i]) return false;
+  }
+
+  // Compare plugin column values
+  if (prev.pluginColumns !== next.pluginColumns) return false;
+  if (prev.pluginColumnContextMap !== next.pluginColumnContextMap) return false;
+
+  if (prev.searchQuery !== next.searchQuery) return false;
+
+  return true;
+}
+
+export const TaskRow = memo(TaskRowInner, arePropsEqual);

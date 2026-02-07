@@ -17,6 +17,7 @@ import { createLabel } from "../../api/labels.ts";
 import { getProjects } from "../../api/projects.ts";
 import { getLabels } from "../../api/labels.ts";
 import { Breadcrumb } from "../components/Breadcrumb.tsx";
+import { PRIORITY_COLORS, PRIORITY_LABELS } from "../constants.ts";
 import { ModalManager } from "../components/ModalManager.tsx";
 import type { Modal } from "../components/ModalManager.tsx";
 import type { ExtensionRegistry, PaletteRegistry, ViewRegistry, PluginContext, HookRegistry } from "../../plugins/types.ts";
@@ -27,13 +28,6 @@ import { useTaskOperations } from "../hooks/useTaskOperations.ts";
 import { useKeyboardHandler } from "../hooks/useKeyboardHandler.ts";
 
 type Panel = "sidebar" | "tasks";
-
-const PRIORITY_COLORS: Record<number, string> = {
-  1: "white",
-  2: "blue",
-  3: "yellow",
-  4: "red",
-};
 
 const PRIORITY_NAMES: Record<number, string> = {
   1: "Normal",
@@ -342,7 +336,7 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
         showStatus("Invalid filter");
       }
     },
-    [],
+    [showStatus],
   );
 
   const handleSearchSubmit = useCallback(
@@ -365,7 +359,7 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
     } catch {
       showStatus("Failed to open in browser");
     }
-  }, [selectedTask]);
+  }, [selectedTask, showStatus]);
 
   const handleCopyUrl = useCallback(() => {
     if (!selectedTask) return;
@@ -385,7 +379,7 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
     } catch {
       showStatus("Failed to copy URL");
     }
-  }, [selectedTask]);
+  }, [selectedTask, showStatus]);
 
   const handleCreateProject = useCallback(async (name: string) => {
     setModal("none");
@@ -479,7 +473,7 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
     });
     setRangeSelectAnchor(null);
     showStatus(`${end - start + 1} tasks selected`);
-  }, [rangeSelectAnchor, taskIndex, filteredTasks, selectedTask]);
+  }, [rangeSelectAnchor, taskIndex, filteredTasks, selectedTask, showStatus]);
 
   // Build command palette commands
   const commands = useMemo((): Command[] => {
@@ -627,7 +621,7 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
       }
     }
     return cmds;
-  }, [selectedTask, selectedIds, projects, refreshTasks, onQuit, onOpenTask, onNavigate, handleCompleteTask, handleBulkComplete, pluginPalette, pluginPaletteContextMap, showStatus, setPendingPluginInput]);
+  }, [selectedTask, selectedIds, projects, refreshTasks, onQuit, onOpenTask, onNavigate, handleCompleteTask, handleBulkComplete, handleOpenInBrowser, filterProjectId, pluginPalette, pluginPaletteContextMap, showStatus, setPendingPluginInput]);
 
   useKeyboardHandler({
     modal,

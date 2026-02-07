@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from "react";
 import { Box, Text, useInput } from "ink";
 import type { Task, Project, Label, Priority, UpdateTaskParams, CreateTaskParams } from "../../api/types.ts";
+import { PRIORITY_LABELS, PRIORITY_COLORS } from "../constants.ts";
 
 interface EditTaskModalProps {
   task?: Task;
@@ -16,11 +17,8 @@ interface EditTaskModalProps {
 type FieldName = "content" | "description" | "priority" | "due" | "deadline" | "labels" | "project";
 const FIELDS: FieldName[] = ["content", "description", "priority", "due", "deadline", "labels", "project"];
 
-const priorityLabels: Record<number, { label: string; color: string; dot: string }> = {
-  1: { label: "Normal", color: "white", dot: "○" },
-  2: { label: "Medium", color: "blue", dot: "●" },
-  3: { label: "High", color: "yellow", dot: "●" },
-  4: { label: "Urgent", color: "red", dot: "●" },
+const PRIORITY_DOTS: Record<number, string> = {
+  1: "\u25CB", 2: "\u25CF", 3: "\u25CF", 4: "\u25CF",
 };
 
 const VIEW_SIZE = 8;
@@ -381,15 +379,17 @@ export function EditTaskModal({ task, projects, labels, onSave, onCreate, onCanc
           <Text color={currentField === "priority" ? "yellow" : "gray"}>Priority:</Text>
         </Box>
         {([1, 2, 3, 4] as const).map((p) => {
-          const info = priorityLabels[p]!;
+          const dot = PRIORITY_DOTS[p] ?? "\u25CB";
+          const color = PRIORITY_COLORS[p] ?? "gray";
+          const label = PRIORITY_LABELS[p] ?? `p${p}`;
           const isActive = form.priority === p;
           return (
             <Box key={p} marginRight={1}>
               <Text
-                color={isActive ? info.color : "gray"}
+                color={isActive ? color : "gray"}
                 bold={isActive}
               >
-                {isActive ? `[${info.dot} ${p}: ${info.label}]` : `${info.dot} ${p}: ${info.label}`}
+                {isActive ? `[${dot} ${p}: ${label}]` : `${dot} ${p}: ${label}`}
               </Text>
             </Box>
           );
