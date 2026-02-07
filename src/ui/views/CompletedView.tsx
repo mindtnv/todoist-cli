@@ -4,6 +4,7 @@ import { getCompletedTasks } from "../../api/completed.ts";
 import { reopenTask } from "../../api/tasks.ts";
 import type { CompletedTask } from "../../api/types.ts";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
+import { ViewShell } from "../components/ViewShell.tsx";
 import { useAsyncData } from "../hooks/useAsyncData.ts";
 
 interface CompletedViewProps {
@@ -198,89 +199,31 @@ export function CompletedView({ onBack }: CompletedViewProps) {
     }
   });
 
-  if (loading) {
+  if (loading || error) {
     return (
-      <Box flexDirection="column" width="100%" height="100%">
-        <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor="cyan" paddingX={2} paddingY={1}>
-          <Text bold color="cyan">Completed Tasks</Text>
-          <Box marginTop={1}>
-            <Text color="gray">Loading...</Text>
-          </Box>
-        </Box>
-        <Box borderStyle="single" borderColor="gray" paddingX={1}>
-          <Text color="gray">[Esc]</Text><Text> back</Text>
-        </Box>
-      </Box>
-    );
-  }
-
-  if (error) {
-    return (
-      <Box flexDirection="column" width="100%" height="100%">
-        <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor="cyan" paddingX={2} paddingY={1}>
-          <Text bold color="cyan">Completed Tasks</Text>
-          <Box marginTop={1}>
-            <Text color="red">Error: {error}</Text>
-          </Box>
-        </Box>
-        <Box borderStyle="single" borderColor="gray" paddingX={1}>
-          <Text color="gray">[Esc]</Text><Text> back</Text>
-        </Box>
-      </Box>
+      <ViewShell title="Completed Tasks" onBack={onBack} loading={loading} error={error}>
+        <></>
+      </ViewShell>
     );
   }
 
   if (!tasks || tasks.length === 0) {
     return (
-      <Box flexDirection="column" width="100%" height="100%">
-        <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor="cyan" paddingX={2} paddingY={1}>
+      <ViewShell title="Completed Tasks" onBack={onBack} handleKeys={false}>
+        <Box marginBottom={1}>
           <Text bold color="cyan">Completed Tasks</Text>
-          <Box marginTop={1}>
-            <Text color="gray">No completed tasks found</Text>
-          </Box>
         </Box>
-        <Box borderStyle="single" borderColor="gray" paddingX={1}>
-          <Text color="gray">[Esc]</Text><Text> back</Text>
+        <Box marginTop={1}>
+          <Text color="gray">No completed tasks found</Text>
         </Box>
-      </Box>
+      </ViewShell>
     );
   }
 
   const visibleLines = lines.slice(scrollOffset, scrollOffset + viewHeight);
 
-  return (
-    <Box flexDirection="column" width="100%" height="100%">
-      <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor="cyan" paddingX={2} paddingY={1}>
-        <Box marginBottom={1}>
-          <Text bold color="cyan">Completed Tasks</Text>
-          <Text color="gray">{`  (${tasks?.length ?? 0} tasks)`}</Text>
-        </Box>
-
-        <Box flexDirection="column">
-          {visibleLines.map((line, i) => {
-            const absoluteIndex = scrollOffset + i;
-            const isSelected = absoluteIndex === selectedIndex;
-
-            if (line.type === "header") {
-              return (
-                <Text key={`h-${line.label}-${i}`} bold color="yellow">
-                  {`-- ${line.label} --`}
-                </Text>
-              );
-            }
-            return (
-              <Box key={`t-${line.task.id}-${i}`} justifyContent="space-between" backgroundColor={isSelected ? "blue" : undefined}>
-                <Text>
-                  <Text color="green">{"\u2713"} </Text>
-                  <Text>{line.task.content}</Text>
-                </Text>
-                <Text color="gray">{formatTime(line.task.completed_at)}</Text>
-              </Box>
-            );
-          })}
-        </Box>
-      </Box>
-
+  const footerContent = (
+    <>
       {statusMessage && (
         <Box borderStyle="single" borderColor="green" paddingX={1}>
           <Text>{statusMessage}</Text>
@@ -307,6 +250,39 @@ export function CompletedView({ onBack }: CompletedViewProps) {
           </Text>
         )}
       </Box>
-    </Box>
+    </>
+  );
+
+  return (
+    <ViewShell title="Completed Tasks" onBack={onBack} handleKeys={false} footer={footerContent}>
+      <Box marginBottom={1}>
+        <Text bold color="cyan">Completed Tasks</Text>
+        <Text color="gray">{`  (${tasks?.length ?? 0} tasks)`}</Text>
+      </Box>
+
+      <Box flexDirection="column">
+        {visibleLines.map((line, i) => {
+          const absoluteIndex = scrollOffset + i;
+          const isSelected = absoluteIndex === selectedIndex;
+
+          if (line.type === "header") {
+            return (
+              <Text key={`h-${line.label}-${i}`} bold color="yellow">
+                {`-- ${line.label} --`}
+              </Text>
+            );
+          }
+          return (
+            <Box key={`t-${line.task.id}-${i}`} justifyContent="space-between" backgroundColor={isSelected ? "blue" : undefined}>
+              <Text>
+                <Text color="green">{"\u2713"} </Text>
+                <Text>{line.task.content}</Text>
+              </Text>
+              <Text color="gray">{formatTime(line.task.completed_at)}</Text>
+            </Box>
+          );
+        })}
+      </Box>
+    </ViewShell>
   );
 }

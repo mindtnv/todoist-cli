@@ -45,6 +45,26 @@ export function createExtensionRegistry(): ExtensionRegistry {
       statusBarItems.push(item);
     },
 
+    removeTaskColumn(id: string) {
+      const idx = columns.findIndex(c => c.id === id);
+      if (idx !== -1) columns.splice(idx, 1);
+    },
+
+    removeDetailSection(id: string) {
+      const idx = sections.findIndex(s => s.id === id);
+      if (idx !== -1) sections.splice(idx, 1);
+    },
+
+    removeKeybinding(key: string) {
+      const idx = keybindings.findIndex(k => k.key === key);
+      if (idx !== -1) keybindings.splice(idx, 1);
+    },
+
+    removeStatusBarItem(id: string) {
+      const idx = statusBarItems.findIndex(s => s.id === id);
+      if (idx !== -1) statusBarItems.splice(idx, 1);
+    },
+
     getTaskColumns: () => [...columns],
     getDetailSections: () => [...sections],
     getKeybindings: () => [...keybindings],

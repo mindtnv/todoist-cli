@@ -12,6 +12,45 @@ import { CONFIG_DIR, getConfig } from "../config/index.ts";
 
 const PLUGINS_DIR = join(CONFIG_DIR, "plugins");
 
+// Read CLI version from package.json at build time
+const CLI_VERSION = (() => {
+  try {
+    const pkgPath = join(dirname(dirname(__dirname)), "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+    return pkg.version as string;
+  } catch {
+    return "0.0.0";
+  }
+})();
+
+/**
+ * Simple semver comparison. Handles `>=X.Y.Z` format.
+ * Returns true if `current` satisfies the `required` constraint.
+ */
+function satisfiesVersion(required: string, current: string): boolean {
+  const trimmed = required.trim();
+  if (!trimmed) return true;
+
+  const match = trimmed.match(/^>=\s*(\d+\.\d+\.\d+)$/);
+  if (!match) {
+    // Unsupported format — be lenient and allow
+    return true;
+  }
+
+  const minVersion = match[1]!;
+  const minParts = minVersion.split(".").map(Number);
+  const curParts = current.split(".").map(Number);
+
+  for (let i = 0; i < 3; i++) {
+    const min = minParts[i] ?? 0;
+    const cur = curParts[i] ?? 0;
+    if (cur > min) return true;
+    if (cur < min) return false;
+  }
+  // All parts equal — satisfies >=
+  return true;
+}
+
 function isValidPlugin(value: unknown): value is TodoistPlugin {
   if (typeof value !== "object" || value === null) return false;
   const obj = value as Record<string, unknown>;
@@ -148,6 +187,16 @@ export async function loadPlugins(
         }
       }
 
+      // Version compatibility check
+      const requiredVersion = manifest?.engines?.["todoist-cli"];
+      if (requiredVersion && !satisfiesVersion(requiredVersion, CLI_VERSION)) {
+        console.warn(
+          `[plugins] Plugin "${name}" requires todoist-cli ${requiredVersion}, ` +
+          `but current version is ${CLI_VERSION}. Skipping.`
+        );
+        continue;
+      }
+
       const mainFile = manifest?.main ?? "./src/index.ts";
       const modulePath = join(pluginDir, mainFile);
       const mod = await import(modulePath);
@@ -184,6 +233,10 @@ export async function loadPlugins(
             views.addView(view);
             viewContextMap.set(view.name, ctx);
           },
+          removeView(name) {
+            views.removeView(name);
+            viewContextMap.delete(name);
+          },
           getViews: () => views.getViews(),
         };
         plugin.registerViews(trackingViewRegistry);
@@ -208,6 +261,22 @@ export async function loadPlugins(
             extensions.addStatusBarItem(item);
             statusBarContextMap.set(item.id, ctx);
           },
+          removeTaskColumn(id) {
+            extensions.removeTaskColumn(id);
+            columnContextMap.delete(id);
+          },
+          removeDetailSection(id) {
+            extensions.removeDetailSection(id);
+            detailSectionContextMap.delete(id);
+          },
+          removeKeybinding(key) {
+            extensions.removeKeybinding(key);
+            keybindingContextMap.delete(key);
+          },
+          removeStatusBarItem(id) {
+            extensions.removeStatusBarItem(id);
+            statusBarContextMap.delete(id);
+          },
           getTaskColumns: () => extensions.getTaskColumns(),
           getDetailSections: () => extensions.getDetailSections(),
           getKeybindings: () => extensions.getKeybindings(),
@@ -225,6 +294,12 @@ export async function loadPlugins(
               paletteContextMap.set(cmd.label, ctx);
             }
           },
+          removeCommands(labels) {
+            palette.removeCommands(labels);
+            for (const label of labels) {
+              paletteContextMap.delete(label);
+            }
+          },
           getCommands: () => palette.getCommands(),
         };
         plugin.registerPaletteCommands(trackingPaletteRegistry);
@@ -240,12 +315,73 @@ export async function loadPlugins(
 }
 
 export async function unloadPlugins(loaded: LoadedPlugins): Promise<void> {
-  for (const { plugin } of loaded.plugins) {
+  const {
+    views, extensions, palette, hooks,
+    viewContextMap, keybindingContextMap, columnContextMap,
+    detailSectionContextMap, paletteContextMap, statusBarContextMap,
+  } = loaded;
+
+  for (const { plugin, ctx } of loaded.plugins) {
     try {
-      if (plugin.onUnload) await plugin.onUnload();
+      if (plugin.onUnload) await plugin.onUnload(ctx);
     } catch (err) {
       console.error(`[plugins] Error unloading "${plugin.name}":`, err);
     }
+
+    // Clean up all registered views for this plugin
+    for (const [name, registeredCtx] of viewContextMap) {
+      if (registeredCtx === ctx) {
+        views.removeView(name);
+        viewContextMap.delete(name);
+      }
+    }
+
+    // Clean up keybindings
+    for (const [key, registeredCtx] of keybindingContextMap) {
+      if (registeredCtx === ctx) {
+        extensions.removeKeybinding(key);
+        keybindingContextMap.delete(key);
+      }
+    }
+
+    // Clean up task columns
+    for (const [id, registeredCtx] of columnContextMap) {
+      if (registeredCtx === ctx) {
+        extensions.removeTaskColumn(id);
+        columnContextMap.delete(id);
+      }
+    }
+
+    // Clean up detail sections
+    for (const [id, registeredCtx] of detailSectionContextMap) {
+      if (registeredCtx === ctx) {
+        extensions.removeDetailSection(id);
+        detailSectionContextMap.delete(id);
+      }
+    }
+
+    // Clean up palette commands
+    const paletteLabelsToRemove: string[] = [];
+    for (const [label, registeredCtx] of paletteContextMap) {
+      if (registeredCtx === ctx) {
+        paletteLabelsToRemove.push(label);
+        paletteContextMap.delete(label);
+      }
+    }
+    if (paletteLabelsToRemove.length > 0) {
+      palette.removeCommands(paletteLabelsToRemove);
+    }
+
+    // Clean up status bar items
+    for (const [id, registeredCtx] of statusBarContextMap) {
+      if (registeredCtx === ctx) {
+        extensions.removeStatusBarItem(id);
+        statusBarContextMap.delete(id);
+      }
+    }
+
+    // Clean up hook handlers registered by this plugin
+    hooks.removeAllForPlugin(plugin.name);
   }
 
   // Close all plugin storage database connections

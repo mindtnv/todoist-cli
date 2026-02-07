@@ -5,7 +5,7 @@ import type { TaskColumnDefinition, PluginContext } from "../../plugins/types.ts
 import { formatRelativeDue, formatDeadlineShort, isDeadlineUrgent } from "../../utils/date-format.ts";
 import { computeSidebarWidth } from "../layout.ts";
 
-interface TaskRowProps {
+export interface TaskRowProps {
   task: Task;
   isSelected: boolean;
   isMarked?: boolean;
@@ -14,6 +14,7 @@ interface TaskRowProps {
   termWidth: number;
   pluginColumns?: TaskColumnDefinition[];
   pluginColumnContextMap?: Map<string, PluginContext>;
+  tick?: number;
 }
 
 function highlightMatch(text: string, query: string): React.ReactNode {
@@ -40,6 +41,56 @@ const priorityConfig: Record<number, { dot: string; color: string }> = {
   2: { dot: "\u25CF", color: "blue" },
   1: { dot: "\u25CB", color: "gray" },
 };
+
+type ColumnPosition = TaskColumnDefinition["position"];
+
+function renderPluginColumns(
+  columns: TaskColumnDefinition[] | undefined,
+  position: ColumnPosition,
+  task: Task,
+  pluginColumnContextMap: Map<string, PluginContext> | undefined,
+): React.ReactNode {
+  if (!columns) return null;
+  const filtered = columns.filter(col => col.position === position);
+  if (filtered.length === 0) return null;
+  return (
+    <>
+      {filtered.map(col => {
+        const colCtx = pluginColumnContextMap?.get(col.id);
+        if (!colCtx) return null;
+        const rawText = col.render(task, colCtx) ?? "";
+        const colWidth = col.width ?? 8;
+        const fixedText = rawText.length > colWidth ? rawText.slice(0, colWidth - 1) + "\u2026" : rawText.padEnd(colWidth);
+        const textColor = col.color?.(task) ?? "dim";
+        return <Text key={col.id} color={textColor}>{` ${fixedText}`}</Text>;
+      })}
+    </>
+  );
+}
+
+function renderTrailingPluginColumns(
+  columns: TaskColumnDefinition[] | undefined,
+  task: Task,
+  pluginColumnContextMap: Map<string, PluginContext> | undefined,
+): React.ReactNode {
+  if (!columns) return null;
+  const knownPositions: ColumnPosition[] = ["after-priority", "before-content", "after-due"];
+  const trailing = columns.filter(col => !knownPositions.includes(col.position));
+  if (trailing.length === 0) return null;
+  return (
+    <>
+      {trailing.map(col => {
+        const colCtx = pluginColumnContextMap?.get(col.id);
+        if (!colCtx) return null;
+        const rawText = col.render(task, colCtx) ?? "";
+        const colWidth = col.width ?? 8;
+        const fixedText = rawText.length > colWidth ? rawText.slice(0, colWidth - 1) + "\u2026" : rawText.padEnd(colWidth);
+        const textColor = col.color?.(task) ?? "dim";
+        return <Text key={col.id} color={textColor}>{` ${fixedText}`}</Text>;
+      })}
+    </>
+  );
+}
 
 function TaskRowInner({ task, isSelected, isMarked = false, depth = 0, searchQuery, termWidth, pluginColumns, pluginColumnContextMap }: TaskRowProps) {
   const checkbox = task.is_completed ? "\u2611" : "\u2610";
@@ -83,22 +134,17 @@ function TaskRowInner({ task, isSelected, isMarked = false, depth = 0, searchQue
         {indent ? <Text color="gray" dimColor>{indent}</Text> : null}
         <Text>{checkbox} </Text>
         <Text color={prio.color}>{prio.dot}</Text>
+        {renderPluginColumns(pluginColumns, "after-priority", task, pluginColumnContextMap)}
+        {renderPluginColumns(pluginColumns, "before-content", task, pluginColumnContextMap)}
         {" "}
         <Text strikethrough={task.is_completed}>{searchQuery ? highlightMatch(content, searchQuery) : content}</Text>
         {dueText ? <Text color={dueColor}>{` [${dueText}]`}</Text> : null}
         {recurringIndicator ? <Text color="cyan">{recurringIndicator}</Text> : null}
+        {renderPluginColumns(pluginColumns, "after-due", task, pluginColumnContextMap)}
         {deadlineText ? <Text color={deadlineUrgent ? "red" : "magenta"} bold={deadlineUrgent}>{` \u2691 ${deadlineText}`}</Text> : null}
         {labelText ? <Text color="magenta">{` ${labelText}`}</Text> : null}
         {commentText ? <Text color="gray">{` ${commentText}`}</Text> : null}
-        {pluginColumns?.map(col => {
-          const colCtx = pluginColumnContextMap?.get(col.id);
-          if (!colCtx) return null;
-          const rawText = col.render(task, colCtx) ?? "";
-          const colWidth = col.width ?? 8;
-          const fixedText = rawText.length > colWidth ? rawText.slice(0, colWidth - 1) + "\u2026" : rawText.padEnd(colWidth);
-          const textColor = col.color?.(task) ?? "dim";
-          return <Text key={col.id} color={textColor}>{` ${fixedText}`}</Text>;
-        })}
+        {renderTrailingPluginColumns(pluginColumns, task, pluginColumnContextMap)}
         {" "}
       </Text>
     </Box>
@@ -133,6 +179,9 @@ function arePropsEqual(prev: TaskRowProps, next: TaskRowProps): boolean {
   // Compare plugin column values
   if (prev.pluginColumns !== next.pluginColumns) return false;
   if (prev.pluginColumnContextMap !== next.pluginColumnContextMap) return false;
+
+  // Compare tick for plugin refreshInterval re-renders
+  if ((prev.tick ?? 0) !== (next.tick ?? 0)) return false;
 
   if (prev.searchQuery !== next.searchQuery) return false;
 

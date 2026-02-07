@@ -7,14 +7,22 @@ type AnyHookHandler = (ctx: HookContextMap[HookEvent]) => Promise<{ message?: st
 
 export function createHookRegistry(): HookRegistry {
   const handlers = new Map<HookEvent, Set<AnyHookHandler>>();
+  /** Track which plugin registered each handler for removeAllForPlugin */
+  const handlerPluginMap = new Map<AnyHookHandler, string>();
 
-  function on<E extends HookEvent>(event: E, handler: HookHandler<E>): void {
+  function on<E extends HookEvent>(event: E, handler: HookHandler<E>, pluginName?: string): void {
     if (!handlers.has(event)) handlers.set(event, new Set());
-    handlers.get(event)!.add(handler as AnyHookHandler);
+    const castHandler = handler as AnyHookHandler;
+    handlers.get(event)!.add(castHandler);
+    if (pluginName) {
+      handlerPluginMap.set(castHandler, pluginName);
+    }
   }
 
   function off<E extends HookEvent>(event: E, handler: HookHandler<E>): void {
-    handlers.get(event)?.delete(handler as AnyHookHandler);
+    const castHandler = handler as AnyHookHandler;
+    handlers.get(event)?.delete(castHandler);
+    handlerPluginMap.delete(castHandler);
   }
 
   async function emit<E extends HookEvent>(event: E, ctx: HookContextMap[E]): Promise<string[]> {
@@ -33,5 +41,16 @@ export function createHookRegistry(): HookRegistry {
     return messages;
   }
 
-  return { on, off, emit };
+  function removeAllForPlugin(pluginName: string): void {
+    for (const [_event, handlerSet] of handlers) {
+      for (const handler of handlerSet) {
+        if (handlerPluginMap.get(handler) === pluginName) {
+          handlerSet.delete(handler);
+          handlerPluginMap.delete(handler);
+        }
+      }
+    }
+  }
+
+  return { on, off, emit, removeAllForPlugin };
 }

@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import chalk from "chalk";
 import { getStats } from "../api/stats.ts";
-import { cliExit } from "../utils/exit.ts";
+import { handleError } from "../utils/errors.ts";
 
 function bar(value: number, max: number, width: number): string {
   if (max === 0) return chalk.dim("░".repeat(width));
@@ -55,8 +55,7 @@ export function registerStatsCommand(program: Command): void {
 
         console.log("");
       } catch (err) {
-        console.error(chalk.red(`Failed to fetch stats: ${(err as Error).message}`));
-        cliExit(1);
+        handleError(err);
       }
     });
 }

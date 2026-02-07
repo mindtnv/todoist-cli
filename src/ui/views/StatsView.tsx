@@ -1,6 +1,7 @@
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
 import { getStats } from "../../api/stats.ts";
 import { useAsyncData } from "../hooks/useAsyncData.ts";
+import { ViewShell } from "../components/ViewShell.tsx";
 
 interface StatsViewProps {
   onBack: () => void;
@@ -45,41 +46,11 @@ function formatWeekLabel(fromStr: string): string {
 export function StatsView({ onBack }: StatsViewProps) {
   const { data: stats, loading, error } = useAsyncData(() => getStats());
 
-  useInput((input, key) => {
-    if (key.escape || input === "q") {
-      onBack();
-    }
-  });
-
-  if (loading) {
+  if (loading || error || !stats) {
     return (
-      <Box flexDirection="column" width="100%" height="100%">
-        <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor="cyan" paddingX={2} paddingY={1}>
-          <Text bold color="cyan">Productivity Stats</Text>
-          <Box marginTop={1}>
-            <Text color="gray">Loading...</Text>
-          </Box>
-        </Box>
-        <Box borderStyle="single" borderColor="gray" paddingX={1}>
-          <Text color="gray">[Esc]</Text><Text> back</Text>
-        </Box>
-      </Box>
-    );
-  }
-
-  if (error || !stats) {
-    return (
-      <Box flexDirection="column" width="100%" height="100%">
-        <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor="cyan" paddingX={2} paddingY={1}>
-          <Text bold color="cyan">Productivity Stats</Text>
-          <Box marginTop={1}>
-            <Text color="red">Error: {error ?? "No data"}</Text>
-          </Box>
-        </Box>
-        <Box borderStyle="single" borderColor="gray" paddingX={1}>
-          <Text color="gray">[Esc]</Text><Text> back</Text>
-        </Box>
-      </Box>
+      <ViewShell title="Productivity Stats" onBack={onBack} loading={loading} error={error ?? (!loading ? "No data" : null)}>
+        <></>
+      </ViewShell>
     );
   }
 
@@ -93,63 +64,57 @@ export function StatsView({ onBack }: StatsViewProps) {
   const maxWeekValue = Math.max(...recentWeeks.map((w) => w.total_completed), 1);
 
   return (
-    <Box flexDirection="column" width="100%" height="100%">
-      <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor="cyan" paddingX={2} paddingY={1}>
-        <Box marginBottom={1}>
-          <Text bold color="cyan">Productivity Stats</Text>
-        </Box>
-
-        <Box marginBottom={1}>
-          <Text>
-            Karma: <Text bold>{formatKarma(stats.karma)}</Text>
-            <Text color={trendColor(stats.karma_trend)}>{trendArrow(stats.karma_trend)}</Text>
-          </Text>
-          <Text>   Completed today: </Text>
-          <Text bold color="green">{stats.completed_today}</Text>
-        </Box>
-
-        <Box marginBottom={1}>
-          <Text>
-            Total completed: <Text bold>{stats.completed_count.toLocaleString()}</Text>
-          </Text>
-        </Box>
-
-        {recentDays.length > 0 && (
-          <Box flexDirection="column" marginBottom={1}>
-            <Text bold color="yellow">Daily (last 7 days):</Text>
-            {recentDays.map((day) => (
-              <Box key={day.date}>
-                <Text color="gray">{`  ${formatDayLabel(day.date).padEnd(5)}`}</Text>
-                <Text color="green">{renderBar(day.total_completed, maxDayValue, barMaxWidth)}</Text>
-                <Text color="gray">{`  ${day.total_completed}`}</Text>
-              </Box>
-            ))}
-          </Box>
-        )}
-
-        {recentWeeks.length > 0 && (
-          <Box flexDirection="column">
-            <Text bold color="yellow">Weekly:</Text>
-            {recentWeeks.map((week) => (
-              <Box key={week.from}>
-                <Text color="gray">{`  ${formatWeekLabel(week.from).padEnd(7)}`}</Text>
-                <Text color="blue">{renderBar(week.total_completed, maxWeekValue, barMaxWidth)}</Text>
-                <Text color="gray">{`  ${week.total_completed}`}</Text>
-              </Box>
-            ))}
-          </Box>
-        )}
-
-        {recentDays.length === 0 && recentWeeks.length === 0 && (
-          <Box marginTop={1}>
-            <Text color="gray">No activity data available</Text>
-          </Box>
-        )}
+    <ViewShell title="Productivity Stats" onBack={onBack}>
+      <Box marginBottom={1}>
+        <Text bold color="cyan">Productivity Stats</Text>
       </Box>
 
-      <Box borderStyle="single" borderColor="gray" paddingX={1}>
-        <Text color="gray">[Esc]</Text><Text> back</Text>
+      <Box marginBottom={1}>
+        <Text>
+          Karma: <Text bold>{formatKarma(stats.karma)}</Text>
+          <Text color={trendColor(stats.karma_trend)}>{trendArrow(stats.karma_trend)}</Text>
+        </Text>
+        <Text>   Completed today: </Text>
+        <Text bold color="green">{stats.completed_today}</Text>
       </Box>
-    </Box>
+
+      <Box marginBottom={1}>
+        <Text>
+          Total completed: <Text bold>{stats.completed_count.toLocaleString()}</Text>
+        </Text>
+      </Box>
+
+      {recentDays.length > 0 && (
+        <Box flexDirection="column" marginBottom={1}>
+          <Text bold color="yellow">Daily (last 7 days):</Text>
+          {recentDays.map((day) => (
+            <Box key={day.date}>
+              <Text color="gray">{`  ${formatDayLabel(day.date).padEnd(5)}`}</Text>
+              <Text color="green">{renderBar(day.total_completed, maxDayValue, barMaxWidth)}</Text>
+              <Text color="gray">{`  ${day.total_completed}`}</Text>
+            </Box>
+          ))}
+        </Box>
+      )}
+
+      {recentWeeks.length > 0 && (
+        <Box flexDirection="column">
+          <Text bold color="yellow">Weekly:</Text>
+          {recentWeeks.map((week) => (
+            <Box key={week.from}>
+              <Text color="gray">{`  ${formatWeekLabel(week.from).padEnd(7)}`}</Text>
+              <Text color="blue">{renderBar(week.total_completed, maxWeekValue, barMaxWidth)}</Text>
+              <Text color="gray">{`  ${week.total_completed}`}</Text>
+            </Box>
+          ))}
+        </Box>
+      )}
+
+      {recentDays.length === 0 && recentWeeks.length === 0 && (
+        <Box marginTop={1}>
+          <Text color="gray">No activity data available</Text>
+        </Box>
+      )}
+    </ViewShell>
   );
 }

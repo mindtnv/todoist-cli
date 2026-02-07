@@ -38,6 +38,24 @@ class ErrorBoundary extends Component<
   }
 }
 
+class PluginErrorBoundary extends Component<
+  { pluginName: string; children: React.ReactNode },
+  { error: Error | null }
+> {
+  override state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  override render() {
+    if (this.state.error) {
+      return (
+        <Box>
+          <Text color="red">Plugin &quot;{this.props.pluginName}&quot; crashed: {this.state.error.message}. Press Esc to go back.</Text>
+        </Box>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 type View =
   | { type: "list" }
   | { type: "detail"; task: Task }
@@ -204,14 +222,16 @@ function App() {
         if (ctx) {
           const PluginComponent = pluginView.component;
           return (
-            <PluginComponent
-              onBack={handleBackToList}
-              onNavigate={handleNavigate}
-              ctx={ctx}
-              tasks={tasks}
-              projects={projects}
-              labels={labels}
-            />
+            <PluginErrorBoundary pluginName={view.name}>
+              <PluginComponent
+                onBack={handleBackToList}
+                onNavigate={handleNavigate}
+                ctx={ctx}
+                tasks={tasks}
+                projects={projects}
+                labels={labels}
+              />
+            </PluginErrorBoundary>
           );
         }
       }

@@ -44,6 +44,24 @@ function isTimeoutError(err: unknown): boolean {
   return false;
 }
 
+export class ApiError extends Error {
+  readonly status: number;
+  readonly statusText: string;
+  readonly body: string;
+  readonly url: string;
+  readonly retryable: boolean;
+
+  constructor(opts: { status: number; statusText: string; body: string; url: string }) {
+    super(`API error ${opts.status}: ${opts.statusText}`);
+    this.name = "ApiError";
+    this.status = opts.status;
+    this.statusText = opts.statusText;
+    this.body = opts.body;
+    this.url = opts.url;
+    this.retryable = opts.status >= 500 || opts.status === 429;
+  }
+}
+
 export class RetryExhaustedError extends Error {
   constructor(
     public readonly url: string,
@@ -120,6 +138,19 @@ class TodoistClient {
       method: "PATCH",
       headers: this.jsonHeaders,
       body: body ? JSON.stringify(body) : undefined,
+    });
+    return this.handleResponse<T>(res);
+  }
+
+  async postForm<T>(path: string, body: URLSearchParams, baseUrl?: string): Promise<T> {
+    const url = `${baseUrl ?? BASE_URL}${path}`;
+    const res = await this.fetchWithRetry(url, {
+      method: "POST",
+      headers: {
+        ...this.authHeaders,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: body.toString(),
     });
     return this.handleResponse<T>(res);
   }
@@ -242,25 +273,40 @@ class TodoistClient {
   }
 
   private async throwError(res: Response): Promise<never> {
-    if (res.status === 401) {
-      throw new Error("Authentication failed. Run `todoist auth` to set a valid API token.");
-    }
-    let detail = res.statusText;
+    let bodyText = "";
     try {
-      const body = await res.text();
-      if (body) {
-        try {
-          const parsed = JSON.parse(body);
-          if (parsed.error) detail = parsed.error;
-          else detail = body;
-        } catch {
-          detail = body;
-        }
-      }
+      bodyText = await res.text();
     } catch {
-      // use statusText as fallback
+      // use empty body as fallback
     }
-    throw new Error(`API error ${res.status}: ${detail}`);
+
+    // Parse body for a more descriptive statusText
+    let detail = res.statusText;
+    if (bodyText) {
+      try {
+        const parsed = JSON.parse(bodyText);
+        if (parsed.error) detail = parsed.error;
+        else detail = bodyText;
+      } catch {
+        detail = bodyText;
+      }
+    }
+
+    if (res.status === 401) {
+      throw new ApiError({
+        status: 401,
+        statusText: "Authentication failed. Run `todoist auth` to set a valid API token.",
+        body: bodyText,
+        url: res.url,
+      });
+    }
+
+    throw new ApiError({
+      status: res.status,
+      statusText: detail,
+      body: bodyText,
+      url: res.url,
+    });
   }
 }
 

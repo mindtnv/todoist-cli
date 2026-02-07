@@ -3,8 +3,7 @@ import chalk from "chalk";
 import { getFilters, saveFilter, removeFilter } from "../config/index.ts";
 import { getTasks } from "../api/tasks.ts";
 import { printTaskTable } from "./commands/task/index.ts";
-import { handleError } from "../utils/errors.ts";
-import { cliExit } from "../utils/exit.ts";
+import { handleError, CliError, EXIT_NOT_FOUND } from "../utils/errors.ts";
 import { printJsonFields } from "../utils/json-output.ts";
 
 export function registerFilterCommand(program: Command): void {
@@ -48,8 +47,10 @@ export function registerFilterCommand(program: Command): void {
       if (removeFilter(name)) {
         console.log(chalk.green(`Filter "${name}" deleted.`));
       } else {
-        console.error(chalk.red(`Filter "${name}" not found.`));
-        cliExit(1);
+        handleError(new CliError(`Filter "${name}" not found.`, {
+          code: EXIT_NOT_FOUND,
+          suggestion: "Run `todoist filter list` to see available filters.",
+        }));
       }
     });
 
@@ -67,12 +68,14 @@ export function registerFilterCommand(program: Command): void {
         const filters = getFilters();
         const query = filters[name];
         if (!query) {
-          console.error(chalk.red(`Filter "${name}" not found.`));
           const available = Object.keys(filters);
-          if (available.length > 0) {
-            console.error(chalk.dim(`Available: ${available.join(", ")}`));
-          }
-          cliExit(1);
+          const suggestion = available.length > 0
+            ? `Available filters: ${available.join(", ")}`
+            : "No saved filters. Create one with: todoist filter save <name> <query>";
+          throw new CliError(`Filter "${name}" not found.`, {
+            code: EXIT_NOT_FOUND,
+            suggestion,
+          });
         }
 
         const tasks = await getTasks({ filter: query });

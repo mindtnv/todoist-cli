@@ -140,7 +140,7 @@ export interface TaskFilter {
   filter?: string;
 }
 
-export interface ApiError {
+export interface ApiErrorResponse {
   error: string;
   http_code: number;
 }

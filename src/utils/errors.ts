@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import { ApiError } from "../api/client.ts";
 
 export const EXIT_OK = 0;
 export const EXIT_USAGE = 2;
@@ -50,47 +51,59 @@ export function wrapApiError(err: unknown): CliError {
 
   debug("wrapApiError called with:", message);
 
-  // Check for HTTP status codes in the error message
-  const statusMatch = message.match(/\b(4\d{2}|5\d{2})\b/);
-  const statusCode = statusMatch ? parseInt(statusMatch[1]!, 10) : null;
+  // Structured handling for ApiError instances from the HTTP client
+  if (err instanceof ApiError) {
+    const { status } = err;
 
-  if (message.includes("Authentication failed") || message.includes("401") || message.includes("403") || statusCode === 401 || statusCode === 403) {
-    return new CliError("Authentication failed. Run `todoist auth` to set your API token.", {
-      code: EXIT_AUTH,
-      errorCode: ErrorCode.AUTH_FAILED,
-      suggestion: "Run `todoist auth` to set a valid API token.",
-    });
+    if (status === 401 || status === 403) {
+      return new CliError("Authentication failed. Run `todoist auth` to set your API token.", {
+        code: EXIT_AUTH,
+        errorCode: ErrorCode.AUTH_FAILED,
+        suggestion: "Run `todoist auth` to set a valid API token.",
+      });
+    }
+
+    if (status === 429) {
+      return new CliError("Rate limit exceeded. Please wait a moment and try again.", {
+        code: EXIT_NETWORK,
+        errorCode: ErrorCode.RATE_LIMITED,
+        suggestion: "Wait a moment and try again. Todoist allows ~450 requests per 15 minutes.",
+      });
+    }
+
+    if (status === 404) {
+      return new CliError("Resource not found. The task/project may have been deleted.", {
+        code: EXIT_NOT_FOUND,
+        errorCode: ErrorCode.NOT_FOUND,
+        suggestion: "Check the ID and try again. The resource may have been deleted or moved.",
+      });
+    }
+
+    if (status >= 500) {
+      return new CliError("Todoist API is experiencing issues. Try again later.", {
+        code: EXIT_NETWORK,
+        errorCode: ErrorCode.NETWORK,
+        suggestion: "The Todoist servers are having problems. Check https://status.todoist.com for updates.",
+      });
+    }
+
+    return new CliError(message, { code: 1, errorCode: ErrorCode.UNKNOWN });
   }
 
-  if (message.includes("Rate limit") || message.includes("429") || statusCode === 429) {
-    return new CliError("Rate limit exceeded. Please wait a moment and try again.", {
-      code: EXIT_NETWORK,
-      errorCode: ErrorCode.RATE_LIMITED,
-      suggestion: "Wait a moment and try again. Todoist allows ~450 requests per 15 minutes.",
-    });
-  }
-
-  if (message.includes("404") || message.includes("not found") || statusCode === 404) {
-    return new CliError("Resource not found. The task/project may have been deleted.", {
-      code: EXIT_NOT_FOUND,
-      errorCode: ErrorCode.NOT_FOUND,
-      suggestion: "Check the ID and try again. The resource may have been deleted or moved.",
-    });
-  }
-
-  if (statusCode && statusCode >= 500) {
-    return new CliError("Todoist API is experiencing issues. Try again later.", {
-      code: EXIT_NETWORK,
-      errorCode: ErrorCode.NETWORK,
-      suggestion: "The Todoist servers are having problems. Check https://status.todoist.com for updates.",
-    });
-  }
-
+  // Fallback: regex-based detection for non-ApiError errors (network errors, etc.)
   if (message.includes("fetch") || message.includes("ECONNREFUSED") || message.includes("ENOTFOUND") || message.includes("ETIMEDOUT")) {
     return new CliError("Network error — could not reach the Todoist API.", {
       code: EXIT_NETWORK,
       errorCode: ErrorCode.NETWORK,
       suggestion: "Check your internet connection and try again.",
+    });
+  }
+
+  if (message.includes("Rate limit")) {
+    return new CliError("Rate limit exceeded. Please wait a moment and try again.", {
+      code: EXIT_NETWORK,
+      errorCode: ErrorCode.RATE_LIMITED,
+      suggestion: "Wait a moment and try again. Todoist allows ~450 requests per 15 minutes.",
     });
   }
 

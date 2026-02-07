@@ -12,6 +12,11 @@ export function createViewRegistry(): ViewRegistry {
       views.push(view);
     },
 
+    removeView(name: string) {
+      const idx = views.findIndex(v => v.name === name);
+      if (idx !== -1) views.splice(idx, 1);
+    },
+
     getViews() {
       return [...views];
     },

@@ -90,9 +90,10 @@ export type HookContext = HookContextMap[HookEvent];
 export type HookHandler<E extends HookEvent = HookEvent> = (ctx: HookContextMap[E]) => Promise<{ message?: string } | void>;
 
 export interface HookRegistry {
-  on<E extends HookEvent>(event: E, handler: HookHandler<E>): void;
+  on<E extends HookEvent>(event: E, handler: HookHandler<E>, pluginName?: string): void;
   off<E extends HookEvent>(event: E, handler: HookHandler<E>): void;
   emit<E extends HookEvent>(event: E, ctx: HookContextMap[E]): Promise<string[]>;
+  removeAllForPlugin(pluginName: string): void;
 }
 
 // ── View Registry ──
@@ -116,6 +117,7 @@ export interface PluginViewProps {
 
 export interface ViewRegistry {
   addView(view: PluginViewDefinition): void;
+  removeView(name: string): void;
   getViews(): PluginViewDefinition[];
 }
 
@@ -157,6 +159,10 @@ export interface ExtensionRegistry {
   addDetailSection(section: DetailSectionDefinition): void;
   addKeybinding(binding: KeybindingDefinition): void;
   addStatusBarItem(item: StatusBarItemDefinition): void;
+  removeTaskColumn(id: string): void;
+  removeDetailSection(id: string): void;
+  removeKeybinding(key: string): void;
+  removeStatusBarItem(id: string): void;
   getTaskColumns(): TaskColumnDefinition[];
   getDetailSections(): DetailSectionDefinition[];
   getKeybindings(): KeybindingDefinition[];
@@ -186,6 +192,7 @@ export interface PaletteCommandDefinition {
 
 export interface PaletteRegistry {
   addCommands(commands: PaletteCommandDefinition[]): void;
+  removeCommands(labels: string[]): void;
   getCommands(): PaletteCommandDefinition[];
 }
 
@@ -201,8 +208,54 @@ export interface TodoistPlugin {
   registerExtensions?(extensions: ExtensionRegistry): void;
   registerPaletteCommands?(palette: PaletteRegistry): void;
   onLoad?(ctx: PluginContext): Promise<void>;
-  onUnload?(): Promise<void>;
+  onUnload?(ctx: PluginContext): Promise<void>;
 }
+
+// ── Plugin Permissions ──
+
+/** Granular permission strings for plugin capabilities */
+export type GranularPermission =
+  | "tasks.read"
+  | "tasks.write"
+  | "tasks.complete"
+  | "tasks.delete"
+  | "projects.read"
+  | "projects.write"
+  | "labels.read"
+  | "labels.write"
+  | "sections.read"
+  | "comments.read"
+  | "comments.write"
+  | "storage";
+
+/** Backward-compatible coarse permission aliases */
+export type CoarsePermission =
+  | "read"       // = all *.read
+  | "write"      // = all *.write
+  | "complete"   // = tasks.complete
+  | "delete"     // = tasks.delete
+  | "*";          // = all permissions
+
+export type PluginPermission = GranularPermission | CoarsePermission;
+
+/**
+ * Maps coarse permissions to the granular permissions they expand to.
+ * Used by the permission checker to resolve backward-compat aliases.
+ */
+export const PERMISSION_ALIASES: Record<CoarsePermission, GranularPermission[]> = {
+  "read": ["tasks.read", "projects.read", "labels.read", "sections.read", "comments.read"],
+  "write": ["tasks.write", "projects.write", "labels.write", "comments.write"],
+  "complete": ["tasks.complete"],
+  "delete": ["tasks.delete"],
+  "*": [
+    "tasks.read", "tasks.write", "tasks.complete", "tasks.delete",
+    "projects.read", "projects.write",
+    "labels.read", "labels.write",
+    "sections.read",
+    "comments.read", "comments.write",
+    "storage",
+  ],
+};
 
 // ── Plugin Manifest (plugin.json) ──
 
@@ -214,7 +267,7 @@ export interface PluginManifest {
   author?: string;
   source?: string;
   engines?: { "todoist-cli"?: string };
-  permissions?: string[];
+  permissions?: PluginPermission[];
 }
 
 // ── Plugin Config (in config.toml) ──

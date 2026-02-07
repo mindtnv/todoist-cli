@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import { getActivity } from "../../api/activity.ts";
 import type { ActivityEvent } from "../../api/types.ts";
+import { ViewShell } from "../components/ViewShell.tsx";
 import { useAsyncData } from "../hooks/useAsyncData.ts";
 
 interface ActivityViewProps {
@@ -102,92 +103,65 @@ export function ActivityView({ onBack }: ActivityViewProps) {
     }
   });
 
-  if (loading) {
+  if (loading || error) {
     return (
-      <Box flexDirection="column" width="100%" height="100%">
-        <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor="cyan" paddingX={2} paddingY={1}>
-          <Text bold color="cyan">Activity Log</Text>
-          <Box marginTop={1}>
-            <Text color="gray">Loading...</Text>
-          </Box>
-        </Box>
-        <Box borderStyle="single" borderColor="gray" paddingX={1}>
-          <Text color="gray">[Esc]</Text><Text> back</Text>
-        </Box>
-      </Box>
-    );
-  }
-
-  if (error) {
-    return (
-      <Box flexDirection="column" width="100%" height="100%">
-        <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor="cyan" paddingX={2} paddingY={1}>
-          <Text bold color="cyan">Activity Log</Text>
-          <Box marginTop={1}>
-            <Text color="red">Error: {error}</Text>
-          </Box>
-        </Box>
-        <Box borderStyle="single" borderColor="gray" paddingX={1}>
-          <Text color="gray">[Esc]</Text><Text> back</Text>
-        </Box>
-      </Box>
+      <ViewShell title="Activity Log" onBack={onBack} loading={loading} error={error}>
+        <></>
+      </ViewShell>
     );
   }
 
   if (eventsList.length === 0) {
     return (
-      <Box flexDirection="column" width="100%" height="100%">
-        <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor="cyan" paddingX={2} paddingY={1}>
+      <ViewShell title="Activity Log" onBack={onBack} handleKeys={false}>
+        <Box marginBottom={1}>
           <Text bold color="cyan">Activity Log</Text>
-          <Box marginTop={1}>
-            <Text color="gray">No activity found</Text>
-          </Box>
         </Box>
-        <Box borderStyle="single" borderColor="gray" paddingX={1}>
-          <Text color="gray">[Esc]</Text><Text> back</Text>
+        <Box marginTop={1}>
+          <Text color="gray">No activity found</Text>
         </Box>
-      </Box>
+      </ViewShell>
     );
   }
 
   const visibleEvents = eventsList.slice(scrollOffset, scrollOffset + viewHeight);
 
-  return (
-    <Box flexDirection="column" width="100%" height="100%">
-      <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor="cyan" paddingX={2} paddingY={1}>
-        <Box marginBottom={1}>
-          <Text bold color="cyan">Activity Log</Text>
-          <Text color="gray">{`  (${eventsList.length} events)`}</Text>
-        </Box>
-
-        <Box flexDirection="column">
-          {visibleEvents.map((event, i) => (
-            <Box key={`${event.id}-${i}`}>
-              <Box width={18}>
-                <Text color="gray">{formatTimestamp(event.event_date)}</Text>
-              </Box>
-              <Box width={12}>
-                <Text color={eventColor(event.event_type)} bold>
-                  {eventLabels[event.event_type] ?? event.event_type}
-                </Text>
-              </Box>
-              <Text>{eventDescription(event)}</Text>
-            </Box>
-          ))}
-        </Box>
-      </Box>
-
-      <Box borderStyle="single" borderColor="gray" paddingX={1} justifyContent="space-between">
-        <Text>
-          <Text color="gray">[j/k]</Text><Text> scroll  </Text>
-          <Text color="gray">[Esc]</Text><Text> back</Text>
+  const footerContent = (
+    <Box borderStyle="single" borderColor="gray" paddingX={1} justifyContent="space-between">
+      <Text>
+        <Text color="gray">[j/k]</Text><Text> scroll  </Text>
+        <Text color="gray">[Esc]</Text><Text> back</Text>
+      </Text>
+      {maxScroll > 0 && (
+        <Text color="gray" dimColor>
+          {`${scrollOffset + 1}-${Math.min(scrollOffset + viewHeight, eventsList.length)}/${eventsList.length}`}
         </Text>
-        {maxScroll > 0 && (
-          <Text color="gray" dimColor>
-            {`${scrollOffset + 1}-${Math.min(scrollOffset + viewHeight, eventsList.length)}/${eventsList.length}`}
-          </Text>
-        )}
-      </Box>
+      )}
     </Box>
+  );
+
+  return (
+    <ViewShell title="Activity Log" onBack={onBack} handleKeys={false} footer={footerContent}>
+      <Box marginBottom={1}>
+        <Text bold color="cyan">Activity Log</Text>
+        <Text color="gray">{`  (${eventsList.length} events)`}</Text>
+      </Box>
+
+      <Box flexDirection="column">
+        {visibleEvents.map((event, i) => (
+          <Box key={`${event.id}-${i}`}>
+            <Box width={18}>
+              <Text color="gray">{formatTimestamp(event.event_date)}</Text>
+            </Box>
+            <Box width={12}>
+              <Text color={eventColor(event.event_type)} bold>
+                {eventLabels[event.event_type] ?? event.event_type}
+              </Text>
+            </Box>
+            <Text>{eventDescription(event)}</Text>
+          </Box>
+        ))}
+      </Box>
+    </ViewShell>
   );
 }

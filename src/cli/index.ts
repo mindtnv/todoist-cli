@@ -93,6 +93,52 @@ async function runWithWatch(interval: number, fn: () => Promise<void>): Promise<
   }
 }
 
+interface FilterCommandOpts {
+  quiet?: boolean;
+  csv?: boolean;
+  tsv?: boolean;
+  json?: string;
+  watch?: string | boolean;
+  count?: boolean;
+}
+
+/**
+ * Shared helper for shortcut and saved-filter commands.
+ * Fetches tasks with a filter, applies optional sort, and outputs in the requested format.
+ */
+async function runFilterCommand(
+  title: string,
+  filter: string,
+  opts: FilterCommandOpts,
+  postFetch?: (tasks: Task[]) => Task[],
+): Promise<void> {
+  const render = async () => {
+    let tasks = await getTasks({ filter });
+    if (postFetch) tasks = postFetch(tasks);
+
+    if (opts.count) { console.log(String(tasks.length)); return; }
+    if (opts.quiet) { for (const t of tasks) console.log(t.id); return; }
+    if (opts.csv || opts.tsv) { console.log(formatTasksDelimited(tasks, opts.tsv ? "\t" : ",")); return; }
+    if (opts.json !== undefined) {
+      printJsonFields(tasks as unknown as Record<string, unknown>[], opts.json);
+      return;
+    }
+
+    console.log(title);
+    console.log("");
+    printTaskTable(tasks);
+  };
+  try {
+    if (opts.watch !== undefined) {
+      const interval = typeof opts.watch === "string" ? parseInt(opts.watch, 10) : 5;
+      await runWithWatch(interval, render);
+    }
+    await render();
+  } catch (err) {
+    handleError(err);
+  }
+}
+
 program
   .name("todoist")
   .description("CLI tool for managing Todoist tasks")
@@ -132,31 +178,20 @@ program
   .option("--tsv", "Output in TSV format")
   .option("-w, --watch [seconds]", "Auto-refresh (default: 5s)")
   .action(async (opts: { timeline?: boolean; json?: string; quiet?: boolean; csv?: boolean; tsv?: boolean; watch?: string | boolean }) => {
-    const render = async () => {
-      let tasks = await getTasks({ filter: "today | overdue" });
-      tasks.sort((a, b) => b.priority - a.priority);
-
-      if (opts.timeline) { printTimeline(tasks); return; }
-      if (opts.quiet) { for (const t of tasks) console.log(t.id); return; }
-      if (opts.csv || opts.tsv) { console.log(formatTasksDelimited(tasks, opts.tsv ? "\t" : ",")); return; }
-      if (opts.json !== undefined) {
-        printJsonFields(tasks as unknown as Record<string, unknown>[], opts.json);
-        return;
+    if (opts.timeline) {
+      try {
+        const tasks = await getTasks({ filter: "today | overdue" });
+        tasks.sort((a, b) => b.priority - a.priority);
+        printTimeline(tasks);
+      } catch (err) {
+        handleError(err);
       }
-
-      console.log(chalk.bold("Today & Overdue"));
-      console.log("");
-      printTaskTable(tasks);
-    };
-    try {
-      if (opts.watch !== undefined) {
-        const interval = typeof opts.watch === "string" ? parseInt(opts.watch, 10) : 5;
-        await runWithWatch(interval, render);
-      }
-      await render();
-    } catch (err) {
-      handleError(err);
+      return;
     }
+    await runFilterCommand(chalk.bold("Today & Overdue"), "today | overdue", opts, (tasks) => {
+      tasks.sort((a, b) => b.priority - a.priority);
+      return tasks;
+    });
   });
 
 // Shortcut: todoist inbox
@@ -168,30 +203,8 @@ program
   .option("--csv", "Output in CSV format")
   .option("--tsv", "Output in TSV format")
   .option("-w, --watch [seconds]", "Auto-refresh (default: 5s)")
-  .action(async (opts: { json?: string; quiet?: boolean; csv?: boolean; tsv?: boolean; watch?: string | boolean }) => {
-    const render = async () => {
-      const tasks = await getTasks({ filter: "#Inbox" });
-
-      if (opts.quiet) { for (const t of tasks) console.log(t.id); return; }
-      if (opts.csv || opts.tsv) { console.log(formatTasksDelimited(tasks, opts.tsv ? "\t" : ",")); return; }
-      if (opts.json !== undefined) {
-        printJsonFields(tasks as unknown as Record<string, unknown>[], opts.json);
-        return;
-      }
-
-      console.log(chalk.bold("Inbox"));
-      console.log("");
-      printTaskTable(tasks);
-    };
-    try {
-      if (opts.watch !== undefined) {
-        const interval = typeof opts.watch === "string" ? parseInt(opts.watch, 10) : 5;
-        await runWithWatch(interval, render);
-      }
-      await render();
-    } catch (err) {
-      handleError(err);
-    }
+  .action(async (opts: FilterCommandOpts) => {
+    await runFilterCommand(chalk.bold("Inbox"), "#Inbox", opts);
   });
 
 // Shortcut: todoist next -- highest priority actionable task
@@ -288,27 +301,20 @@ program
   .command("overdue")
   .description("Show overdue tasks, oldest first")
   .option("-q, --quiet", "Print only task IDs")
-  .action(async (opts: { quiet?: boolean }) => {
-    try {
-      let tasks = await getTasks({ filter: "overdue" });
+  .option("--csv", "Output in CSV format")
+  .option("--tsv", "Output in TSV format")
+  .option("--json <fields>", "Output JSON with specified fields")
+  .option("-w, --watch [seconds]", "Auto-refresh (default: 5s)")
+  .action(async (opts: FilterCommandOpts) => {
+    await runFilterCommand(chalk.bold("Overdue Tasks"), "overdue", opts, (tasks) => {
       // Sort oldest first
       tasks.sort((a, b) => {
         const aDate = a.due?.date ?? "9999";
         const bDate = b.due?.date ?? "9999";
         return aDate.localeCompare(bDate);
       });
-
-      if (opts.quiet) {
-        for (const t of tasks) console.log(t.id);
-        return;
-      }
-
-      console.log(chalk.bold("Overdue Tasks"));
-      console.log("");
-      printTaskTable(tasks);
-    } catch (err) {
-      handleError(err);
-    }
+      return tasks;
+    });
   });
 
 // Shortcut: todoist deadlines -- tasks with upcoming deadlines
@@ -368,21 +374,12 @@ program
   .description("Search tasks by text")
   .argument("<query>", "Search query")
   .option("-q, --quiet", "Print only task IDs")
-  .action(async (query: string, opts: { quiet?: boolean }) => {
-    try {
-      const tasks = await getTasks({ filter: `search: ${query}` });
-
-      if (opts.quiet) {
-        for (const t of tasks) console.log(t.id);
-        return;
-      }
-
-      console.log(chalk.bold(`Search: "${query}"`));
-      console.log("");
-      printTaskTable(tasks);
-    } catch (err) {
-      handleError(err);
-    }
+  .option("--csv", "Output in CSV format")
+  .option("--tsv", "Output in TSV format")
+  .option("--json <fields>", "Output JSON with specified fields")
+  .option("-w, --watch [seconds]", "Auto-refresh (default: 5s)")
+  .action(async (query: string, opts: FilterCommandOpts) => {
+    await runFilterCommand(chalk.bold(`Search: "${query}"`), `search: ${query}`, opts);
   });
 
 program
@@ -508,56 +505,35 @@ for (const [name, query] of Object.entries(savedFilters)) {
     .option("--json <fields>", "Output JSON with specified fields")
     .option("--count", "Show only the count")
     .option("-w, --watch [seconds]", "Auto-refresh (default: 5s)")
-    .action(async (opts: { quiet?: boolean; csv?: boolean; tsv?: boolean; json?: string; count?: boolean; watch?: string | boolean }) => {
-      const render = async () => {
-        const tasks = await getTasks({ filter: query });
-        if (opts.count) { console.log(String(tasks.length)); return; }
-        if (opts.quiet) { for (const t of tasks) console.log(t.id); return; }
-        if (opts.csv || opts.tsv) { console.log(formatTasksDelimited(tasks, opts.tsv ? "\t" : ",")); return; }
-        if (opts.json !== undefined) {
-          printJsonFields(tasks as unknown as Record<string, unknown>[], opts.json);
-          return;
-        }
-        console.log(chalk.bold(name) + chalk.dim(` (${query})`));
-        console.log("");
-        printTaskTable(tasks);
-      };
-      try {
-        if (opts.watch !== undefined) {
-          const interval = typeof opts.watch === "string" ? parseInt(opts.watch, 10) : 5;
-          await runWithWatch(interval, render);
-        }
-        await render();
-      } catch (err) {
-        handleError(err);
-      }
+    .action(async (opts: FilterCommandOpts) => {
+      await runFilterCommand(
+        chalk.bold(name) + chalk.dim(` (${query})`),
+        query,
+        opts,
+      );
     });
 }
 
-// "Did you mean?" for unknown commands
-const knownCommands = [
-  "task", "project", "label", "comment", "template", "section",
-  "auth", "today", "inbox", "ui", "completion", "help",
-  "completed", "review", "matrix", "log", "stats",
-  "next", "upcoming", "overdue", "search", "deadlines", "a", "filter", "plugin",
-  ...Object.keys(savedFilters),
-];
-
-program.on("command:*", (operands: string[]) => {
-  const unknown = operands[0];
-  if (unknown) {
-    const suggestion = didYouMean(unknown, knownCommands);
-    console.error(chalk.red(`Unknown command: ${unknown}`));
-    if (suggestion) {
-      console.error(chalk.yellow(`Did you mean: ${chalk.bold(suggestion)}?`));
-    }
-    console.error(chalk.dim("Run 'todoist --help' for usage information."));
-    cliExit(2);
-  }
-});
-
 async function main() {
   await loadCliPlugins(program);
+
+  // Derive known commands dynamically after all commands (including plugins) are registered
+  const knownCommands = program.commands.map((c) => c.name());
+
+  // "Did you mean?" for unknown commands
+  program.on("command:*", (operands: string[]) => {
+    const unknown = operands[0];
+    if (unknown) {
+      const suggestion = didYouMean(unknown, knownCommands);
+      console.error(chalk.red(`Unknown command: ${unknown}`));
+      if (suggestion) {
+        console.error(chalk.yellow(`Did you mean: ${chalk.bold(suggestion)}?`));
+      }
+      console.error(chalk.dim("Run 'todoist --help' for usage information."));
+      cliExit(2);
+    }
+  });
+
   await program.parseAsync();
 }
 

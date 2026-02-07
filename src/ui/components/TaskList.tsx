@@ -86,6 +86,22 @@ export function TaskList({
   const viewHeight = viewHeightProp ?? dynamicHeight;
   const flatTasks = useMemo(() => buildTree(tasks), [tasks]);
 
+  // Tick counter for plugin columns with refreshInterval
+  const [tick, setTick] = useState(0);
+  const minRefreshInterval = useMemo(() => {
+    if (!pluginColumns) return 0;
+    const intervals = pluginColumns
+      .map(c => c.refreshInterval)
+      .filter((v): v is number => typeof v === "number" && v > 0);
+    return intervals.length > 0 ? Math.min(...intervals) : 0;
+  }, [pluginColumns]);
+
+  useEffect(() => {
+    if (minRefreshInterval <= 0) return;
+    const timer = setInterval(() => setTick(t => t + 1), minRefreshInterval);
+    return () => clearInterval(timer);
+  }, [minRefreshInterval]);
+
   const [pendingG, setPendingG] = useState(false);
   const pendingGTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -230,6 +246,7 @@ export function TaskList({
                   termWidth={stdout?.columns ?? DEFAULT_TERMINAL_COLS}
                   pluginColumns={pluginColumns}
                   pluginColumnContextMap={pluginColumnContextMap}
+                  tick={minRefreshInterval > 0 ? tick : undefined}
                 />
               </Box>
             );
@@ -247,6 +264,7 @@ export function TaskList({
             termWidth={stdout?.columns ?? DEFAULT_TERMINAL_COLS}
             pluginColumns={pluginColumns}
             pluginColumnContextMap={pluginColumnContextMap}
+            tick={minRefreshInterval > 0 ? tick : undefined}
           />
         ))
       )}

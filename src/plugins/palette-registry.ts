@@ -14,6 +14,16 @@ export function createPaletteRegistry(): PaletteRegistry {
       }
     },
 
+    removeCommands(labels: string[]) {
+      const labelSet = new Set(labels);
+      for (let i = commands.length - 1; i >= 0; i--) {
+        const cmd = commands[i];
+        if (cmd && labelSet.has(cmd.label)) {
+          commands.splice(i, 1);
+        }
+      }
+    },
+
     getCommands() {
       return [...commands];
     },

@@ -9,7 +9,8 @@
  * - Read operations (getTasks, getTask, getProjects, getLabels, getSections,
  *   getComments) pass through directly to the underlying API without hooks.
  */
-import type { HookRegistry, HookEvent, HookContextMap, PluginApi } from "./types.ts";
+import type { HookRegistry, HookEvent, HookContextMap, PluginApi, PluginPermission, GranularPermission } from "./types.ts";
+import { PERMISSION_ALIASES } from "./types.ts";
 import * as tasksApi from "../api/tasks.ts";
 import * as projectsApi from "../api/projects.ts";
 import * as labelsApi from "../api/labels.ts";
@@ -17,12 +18,44 @@ import * as sectionsApi from "../api/sections.ts";
 import * as commentsApi from "../api/comments.ts";
 import type { TaskFilter, CreateTaskParams, UpdateTaskParams } from "../api/types.ts";
 
-export function createApiProxy(hooks: HookRegistry, permissions?: string[]): PluginApi {
-  // If no permissions specified, allow everything (backwards compatible)
-  const hasPermission = (perm: string) => !permissions || permissions.includes(perm) || permissions.includes("*");
+/**
+ * Expand a list of plugin permissions (which may include coarse aliases)
+ * into a Set of granular permissions for fast lookup.
+ */
+function expandPermissions(perms: PluginPermission[]): Set<GranularPermission | "*"> {
+  const expanded = new Set<GranularPermission | "*">();
+  for (const perm of perms) {
+    if (perm in PERMISSION_ALIASES) {
+      for (const granular of PERMISSION_ALIASES[perm as keyof typeof PERMISSION_ALIASES]) {
+        expanded.add(granular);
+      }
+      if (perm === "*") expanded.add("*");
+    } else {
+      // Already a granular permission
+      expanded.add(perm as GranularPermission);
+    }
+  }
+  return expanded;
+}
 
-  function denyAction(method: string): never {
-    throw new Error(`Plugin does not have permission for: ${method}. Add "${method.split('.')[0]}" to permissions in plugin.json.`);
+export function createApiProxy(hooks: HookRegistry, permissions?: PluginPermission[]): PluginApi {
+  // If no permissions specified, allow everything (backwards compatible)
+  const expandedPerms = permissions ? expandPermissions(permissions) : null;
+
+  /**
+   * Check if the plugin has a specific granular permission.
+   * Accepts both granular (e.g. "tasks.read") and coarse (e.g. "read") checks.
+   * When checking a granular permission, also accepts if the plugin has the
+   * corresponding coarse alias or "*".
+   */
+  const hasPermission = (perm: string): boolean => {
+    if (!expandedPerms) return true; // No permissions declared = allow all
+    if (expandedPerms.has("*")) return true;
+    return expandedPerms.has(perm as GranularPermission);
+  };
+
+  function denyAction(perm: string, method: string): never {
+    throw new Error(`Plugin does not have permission "${perm}" for: ${method}. Add "${perm}" to permissions in plugin.json.`);
   }
 
   let emitting = false;
@@ -39,16 +72,16 @@ export function createApiProxy(hooks: HookRegistry, permissions?: string[]): Plu
 
   return {
     getTasks(filter?: TaskFilter) {
-      if (!hasPermission("read")) denyAction("read.getTasks");
+      if (!hasPermission("tasks.read")) denyAction("tasks.read", "getTasks");
       return tasksApi.getTasks(filter);
     },
     getTask(id: string) {
-      if (!hasPermission("read")) denyAction("read.getTask");
+      if (!hasPermission("tasks.read")) denyAction("tasks.read", "getTask");
       return tasksApi.getTask(id);
     },
 
     async createTask(params: CreateTaskParams) {
-      if (!hasPermission("write")) denyAction("write.createTask");
+      if (!hasPermission("tasks.write")) denyAction("tasks.write", "createTask");
       await safeEmit("task.creating", { params });
       const task = await tasksApi.createTask(params);
       await safeEmit("task.created", { task });
@@ -56,7 +89,7 @@ export function createApiProxy(hooks: HookRegistry, permissions?: string[]): Plu
     },
 
     async updateTask(id: string, changes: UpdateTaskParams) {
-      if (!hasPermission("write")) denyAction("write.updateTask");
+      if (!hasPermission("tasks.write")) denyAction("tasks.write", "updateTask");
       const task = await tasksApi.getTask(id);
       await safeEmit("task.updating", { task, changes });
       const updated = await tasksApi.updateTask(id, changes);
@@ -65,7 +98,7 @@ export function createApiProxy(hooks: HookRegistry, permissions?: string[]): Plu
     },
 
     async closeTask(id: string) {
-      if (!hasPermission("complete")) denyAction("complete.closeTask");
+      if (!hasPermission("tasks.complete")) denyAction("tasks.complete", "closeTask");
       const task = await tasksApi.getTask(id);
       await safeEmit("task.completing", { task });
       await tasksApi.closeTask(id);
@@ -73,12 +106,12 @@ export function createApiProxy(hooks: HookRegistry, permissions?: string[]): Plu
     },
 
     async reopenTask(id: string) {
-      if (!hasPermission("complete")) denyAction("complete.reopenTask");
+      if (!hasPermission("tasks.complete")) denyAction("tasks.complete", "reopenTask");
       await tasksApi.reopenTask(id);
     },
 
     async deleteTask(id: string) {
-      if (!hasPermission("delete")) denyAction("delete.deleteTask");
+      if (!hasPermission("tasks.delete")) denyAction("tasks.delete", "deleteTask");
       const task = await tasksApi.getTask(id);
       await safeEmit("task.deleting", { task });
       await tasksApi.deleteTask(id);
@@ -86,27 +119,27 @@ export function createApiProxy(hooks: HookRegistry, permissions?: string[]): Plu
     },
 
     getProjects() {
-      if (!hasPermission("read")) denyAction("read.getProjects");
+      if (!hasPermission("projects.read")) denyAction("projects.read", "getProjects");
       return projectsApi.getProjects();
     },
     getProject(id: string) {
-      if (!hasPermission("read")) denyAction("read.getProject");
+      if (!hasPermission("projects.read")) denyAction("projects.read", "getProject");
       return projectsApi.getProject(id);
     },
     getLabels() {
-      if (!hasPermission("read")) denyAction("read.getLabels");
+      if (!hasPermission("labels.read")) denyAction("labels.read", "getLabels");
       return labelsApi.getLabels();
     },
     getLabel(id: string) {
-      if (!hasPermission("read")) denyAction("read.getLabel");
+      if (!hasPermission("labels.read")) denyAction("labels.read", "getLabel");
       return labelsApi.getLabel(id);
     },
     getSections(projectId?: string) {
-      if (!hasPermission("read")) denyAction("read.getSections");
+      if (!hasPermission("sections.read")) denyAction("sections.read", "getSections");
       return sectionsApi.getSections(projectId);
     },
     getComments(taskId: string) {
-      if (!hasPermission("read")) denyAction("read.getComments");
+      if (!hasPermission("comments.read")) denyAction("comments.read", "getComments");
       return commentsApi.getComments(taskId);
     },
   };
