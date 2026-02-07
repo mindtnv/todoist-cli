@@ -1,6 +1,6 @@
 {
   "name": "@mindtnv/todoist-cli",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "A fast, keyboard-driven Todoist client for the terminal — interactive TUI and scriptable CLI",
   "type": "module",
   "bin": {
