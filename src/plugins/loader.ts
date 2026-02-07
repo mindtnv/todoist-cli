@@ -106,14 +106,14 @@ export async function loadPlugins(
     detailSectionContextMap, paletteContextMap, statusBarContextMap,
   };
 
-  if (!pluginConfigs || !existsSync(PLUGINS_DIR)) return loaded;
+  if (!pluginConfigs) return loaded;
 
   ensureSharedDependencies();
 
   for (const [name, pluginConfig] of Object.entries(pluginConfigs)) {
     if (pluginConfig.enabled === false) continue;
 
-    const pluginDir = join(PLUGINS_DIR, name);
+    const pluginDir = pluginConfig.path ?? join(PLUGINS_DIR, name);
     if (!existsSync(pluginDir)) {
       console.warn(`[plugins] Directory not found for "${name}", skipping`);
       continue;

@@ -222,5 +222,6 @@ export interface PluginConfigEntry {
   source: string;
   enabled?: boolean;
   after?: string;
+  path?: string; // absolute path to plugin directory (overrides PLUGINS_DIR/name)
   [key: string]: unknown;
 }
