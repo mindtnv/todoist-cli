@@ -1,5 +1,4 @@
-import { Database } from "bun:sqlite";
-import { mkdirSync, existsSync } from "fs";
+import { mkdirSync, existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import type { PluginStorage } from "./types.ts";
 
@@ -7,74 +6,65 @@ export interface PluginStorageWithClose extends PluginStorage {
   close(): void;
 }
 
+function loadJson<T>(path: string, fallback: T): T {
+  if (!existsSync(path)) return fallback;
+  try {
+    return JSON.parse(readFileSync(path, "utf-8")) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveJson(path: string, data: unknown): void {
+  writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
+}
+
 export function createPluginStorage(dataDir: string): PluginStorageWithClose {
   if (!existsSync(dataDir)) {
     mkdirSync(dataDir, { recursive: true });
   }
 
-  const dbPath = join(dataDir, "data.db");
-  const db = new Database(dbPath);
+  const kvPath = join(dataDir, "kv.json");
+  const taskDataPath = join(dataDir, "task-data.json");
 
-  db.run("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT)");
-  db.run("CREATE TABLE IF NOT EXISTS task_data (task_id TEXT, key TEXT, value TEXT, PRIMARY KEY (task_id, key))");
-
-  const getStmt = db.prepare("SELECT value FROM kv WHERE key = ?");
-  const setStmt = db.prepare("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)");
-  const delStmt = db.prepare("DELETE FROM kv WHERE key = ?");
-  const listStmt = db.prepare("SELECT key FROM kv WHERE key LIKE ? ESCAPE '\\'");
-
-  const getTaskStmt = db.prepare("SELECT value FROM task_data WHERE task_id = ? AND key = ?");
-  const setTaskStmt = db.prepare("INSERT OR REPLACE INTO task_data (task_id, key, value) VALUES (?, ?, ?)");
+  let kv: Record<string, unknown> = loadJson(kvPath, {});
+  let taskData: Record<string, Record<string, unknown>> = loadJson(taskDataPath, {});
 
   return {
     async get<T>(key: string): Promise<T | null> {
-      const row = getStmt.get(key) as { value: string } | null;
-      if (!row) return null;
-      try {
-        return JSON.parse(row.value) as T;
-      } catch {
-        console.warn("[plugin-storage] Corrupted data for key:", key);
-        return null;
-      }
+      const value = kv[key];
+      return value !== undefined ? (value as T) : null;
     },
 
     async set<T>(key: string, value: T): Promise<void> {
-      const serialized = JSON.stringify(value);
-      setStmt.run(key, serialized);
+      kv[key] = value;
+      saveJson(kvPath, kv);
     },
 
     async delete(key: string): Promise<void> {
-      delStmt.run(key);
+      delete kv[key];
+      saveJson(kvPath, kv);
     },
 
     async list(prefix?: string): Promise<string[]> {
-      // Escape SQL LIKE wildcards in the prefix to prevent unintended pattern matching
-      const escapedPrefix = prefix
-        ? prefix.replace(/[%_\\]/g, (ch) => `\\${ch}`)
-        : "";
-      const pattern = prefix ? `${escapedPrefix}%` : "%";
-      const rows = listStmt.all(pattern) as Array<{ key: string }>;
-      return rows.map(r => r.key);
+      const keys = Object.keys(kv);
+      if (!prefix) return keys;
+      return keys.filter((k) => k.startsWith(prefix));
     },
 
     async getTaskData<T>(taskId: string, key: string): Promise<T | null> {
-      const row = getTaskStmt.get(taskId, key) as { value: string } | null;
-      if (!row) return null;
-      try {
-        return JSON.parse(row.value) as T;
-      } catch {
-        console.warn("[plugin-storage] Corrupted data for key:", `${taskId}:${key}`);
-        return null;
-      }
+      const value = taskData[taskId]?.[key];
+      return value !== undefined ? (value as T) : null;
     },
 
     async setTaskData<T>(taskId: string, key: string, value: T): Promise<void> {
-      const serialized = JSON.stringify(value);
-      setTaskStmt.run(taskId, key, serialized);
+      if (!taskData[taskId]) taskData[taskId] = {};
+      taskData[taskId][key] = value;
+      saveJson(taskDataPath, taskData);
     },
 
     close() {
-      db.close();
+      // No-op — JSON files are written synchronously on each mutation
     },
   };
 }

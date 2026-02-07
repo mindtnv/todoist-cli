@@ -32,8 +32,8 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .cursor
 .vscode
 
-# Plugins (installed locally, loaded from ~/.config/todoist-cli/plugins/)
-plugins/
+# Plugin runtime data
+plugins/*/data/
 
 # Finder (MacOS) folder config
 .DS_Store

@@ -1,0 +1,6 @@
+{
+  "name": "todoist-cli-time-tracking",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./src/index.ts"
+}
