@@ -11,6 +11,7 @@
  */
 import type { HookRegistry, HookEvent, HookContextMap, PluginApi, PluginPermission, GranularPermission, EmitResult } from "./types.ts";
 import { PERMISSION_ALIASES } from "./types.ts";
+import { getLogger } from "../utils/logger.ts";
 import * as tasksApi from "../api/tasks.ts";
 import * as projectsApi from "../api/projects.ts";
 import * as labelsApi from "../api/labels.ts";
@@ -24,6 +25,8 @@ import type {
   CreateSectionParams, UpdateSectionParams,
   CreateCommentParams, UpdateCommentParams,
 } from "../api/types.ts";
+
+const log = getLogger("api-proxy");
 
 /**
  * Expand a list of plugin permissions (which may include coarse aliases)
@@ -62,6 +65,7 @@ export function createApiProxy(hooks: HookRegistry, permissions?: PluginPermissi
   };
 
   function denyAction(perm: string, method: string): never {
+    log.warn(`Permission denied: "${perm}" for ${method}`);
     throw new Error(`Plugin does not have permission "${perm}" for: ${method}. Add "${perm}" to permissions in plugin.json.`);
   }
 
@@ -83,6 +87,7 @@ export function createApiProxy(hooks: HookRegistry, permissions?: PluginPermissi
   function checkCancellation(result: EmitResult, operationName: string): void {
     if (result.cancelled) {
       const reason = result.reason ? `: ${result.reason}` : "";
+      log.info(`Operation cancelled by plugin${reason} (${operationName})`);
       throw new Error(`Operation cancelled by plugin${reason} (${operationName})`);
     }
   }

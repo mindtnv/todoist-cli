@@ -28,12 +28,18 @@ export function TimeReportView({ onBack, tasks }: PluginViewProps) {
     setLoading(true);
     setScrollOffset(0);
     const timer = getTimer();
+    if (!timer) {
+      setLoading(false);
+      setEntries([]);
+      return;
+    }
     timer.getAllEntries(days).then((e) => {
       if (!cancelled) {
         setEntries(e);
         setLoading(false);
       }
-    }).catch(() => {
+    }).catch((err) => {
+      console.error("TimeReportView: failed to load entries", err);
       if (!cancelled) {
         setEntries([]);
         setLoading(false);

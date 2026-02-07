@@ -1,4 +1,7 @@
 import type { HookEvent, HookContextMap, HookHandler, HookRegistry, EmitResult } from "./types.ts";
+import { getLogger } from "../utils/logger.ts";
+
+const log = getLogger("hooks");
 
 // Internal handler type that accepts any hook context.
 // Type safety is enforced at call sites via the generic HookRegistry interface;
@@ -66,7 +69,7 @@ export function createHookRegistry(): HookRegistry {
           }
         }
       } catch (err) {
-        console.error(`[plugin-hook] Error in ${event} handler:`, err);
+        log.error(`Error in ${event} handler`, err);
       }
     }
 

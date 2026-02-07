@@ -17,18 +17,22 @@ export function TimeLogSection({ task, ctx: _ctx }: TimeLogSectionProps) {
   const [_tick, setTick] = useState(0);
 
   const timer = getTimer();
-  const isActive = timer.isRunningSync(task.id) || timer.isPausedSync(task.id);
-  const isRunning = timer.isRunningSync(task.id);
-  const isPaused = timer.isPausedSync(task.id);
+
+  const isActive = timer ? (timer.isRunningSync(task.id) || timer.isPausedSync(task.id)) : false;
+  const isRunning = timer ? timer.isRunningSync(task.id) : false;
+  const isPaused = timer ? timer.isPausedSync(task.id) : false;
 
   // Initial load
   useEffect(() => {
+    if (!timer) return;
     let cancelled = false;
     timer.getEntries(task.id).then((e) => {
       if (!cancelled) {
         setEntries(e);
         setTotal(e.reduce((s, entry) => s + entry.duration, 0));
       }
+    }).catch((err) => {
+      console.error("TimeLogSection: failed to load entries", err);
     });
     return () => { cancelled = true; };
   }, [task.id]);
@@ -42,7 +46,7 @@ export function TimeLogSection({ task, ctx: _ctx }: TimeLogSectionProps) {
 
   // Re-fetch entries every 5s when timer is active
   useEffect(() => {
-    if (!isActive) return;
+    if (!isActive || !timer) return;
     let cancelled = false;
     const interval = setInterval(() => {
       timer.getEntries(task.id).then((e) => {
@@ -58,7 +62,15 @@ export function TimeLogSection({ task, ctx: _ctx }: TimeLogSectionProps) {
     };
   }, [isActive, task.id]);
 
-  const liveElapsed = isActive ? timer.getElapsedSync(task.id) : 0;
+  const liveElapsed = (isActive && timer) ? timer.getElapsedSync(task.id) : 0;
+
+  if (!timer) {
+    return (
+      <Box>
+        <Text color="dim">Plugin not initialized</Text>
+      </Box>
+    );
+  }
 
   if (entries.length === 0 && !isActive) {
     return (

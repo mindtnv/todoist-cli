@@ -5,10 +5,10 @@ import { registerTimeCommands } from "./cli/commands.ts";
 import { TimeReportView } from "./ui/TimeReportView.tsx";
 import { TimeLogSection } from "./ui/TimeLogSection.tsx";
 
-let timer: TimerService;
+let timer: TimerService | null = null;
 let pluginCtx: PluginContext;
 
-export function getTimer(): TimerService {
+export function getTimer(): TimerService | null {
   return timer;
 }
 
@@ -30,6 +30,7 @@ const plugin: TodoistPlugin = {
   registerHooks(hooks) {
     // Auto-stop timer when task is completed (running or paused)
     hooks.on("task.completing", async (hookCtx) => {
+      if (!timer) return;
       if (hookCtx.task && (timer.isRunningSync(hookCtx.task.id) || timer.isPausedSync(hookCtx.task.id))) {
         const elapsed = await timer.stop(hookCtx.task.id);
         return { message: `Timer stopped: ${formatDuration(elapsed)}` };
@@ -38,6 +39,7 @@ const plugin: TodoistPlugin = {
 
     // Auto-stop timer when task is deleted (running or paused)
     hooks.on("task.deleting", async (hookCtx) => {
+      if (!timer) return;
       if (hookCtx.task && (timer.isRunningSync(hookCtx.task.id) || timer.isPausedSync(hookCtx.task.id))) {
         await timer.stop(hookCtx.task.id);
       }
@@ -53,6 +55,7 @@ const plugin: TodoistPlugin = {
       position: "after-priority",
       refreshInterval: 1000,
       render: (task) => {
+        if (!timer) return "";
         if (timer.isRunningSync(task.id)) {
           return `▶${formatDuration(timer.getElapsedSync(task.id))}`;
         }
@@ -64,6 +67,7 @@ const plugin: TodoistPlugin = {
         return "";
       },
       color: (task) => {
+        if (!timer) return "dim";
         if (timer.isRunningSync(task.id)) return "green";
         if (timer.isPausedSync(task.id)) return "yellow";
         return "dim";
@@ -74,8 +78,9 @@ const plugin: TodoistPlugin = {
     ext.addStatusBarItem({
       id: "active-timer",
       refreshInterval: 1000,
-      render: () => timer.getActiveFormatted(),
+      render: () => timer ? timer.getActiveFormatted() : "",
       color: () => {
+        if (!timer) return "dim";
         if (timer.hasActiveTimer()) return "green";
         if (timer.hasPausedTimer()) return "yellow";
         return "dim";
@@ -96,7 +101,7 @@ const plugin: TodoistPlugin = {
       description: "Start/pause/stop timer",
       helpSection: "Time Tracking",
       action: async (_ctx, currentTask) => {
-        if (!currentTask) return;
+        if (!currentTask || !timer) return;
         if (timer.isRunningSync(currentTask.id)) {
           await timer.pause(currentTask.id);
           return { statusMessage: `Paused: ${formatDuration(timer.getElapsedSync(currentTask.id))}` };
@@ -112,7 +117,7 @@ const plugin: TodoistPlugin = {
   },
 
   registerCommands(program, _ctx) {
-    registerTimeCommands(program, timer);
+    if (timer) registerTimeCommands(program, timer);
   },
 
   registerViews(registry) {
@@ -132,21 +137,21 @@ const plugin: TodoistPlugin = {
         category: "Time Tracking",
         shortcut: "ctrl+t",
         action: async (_ctx, task) => {
-          if (task) await timer.startTracking(task.id);
+          if (task && timer) await timer.startTracking(task.id);
         },
       },
       {
         label: "Pause Timer",
         category: "Time Tracking",
         action: async (_ctx, task) => {
-          if (task) await timer.pause(task.id);
+          if (task && timer) await timer.pause(task.id);
         },
       },
       {
         label: "Stop Timer",
         category: "Time Tracking",
         action: async () => {
-          await timer.stopActive();
+          if (timer) await timer.stopActive();
         },
       },
       {
@@ -163,7 +168,7 @@ const plugin: TodoistPlugin = {
           },
         },
         action: async (_ctx, task, _navigate, input) => {
-          if (!task || !input) return;
+          if (!task || !input || !timer) return;
           const ms = parseDurationInput(input);
           if (ms <= 0) return;
           await timer.addManualEntry(task.id, ms);
@@ -178,7 +183,7 @@ const plugin: TodoistPlugin = {
   },
 
   async onUnload() {
-    await timer.persistState();
+    if (timer) await timer.persistState();
   },
 };
 

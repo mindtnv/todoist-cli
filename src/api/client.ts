@@ -1,4 +1,7 @@
 import { requireToken, getSyncConfig } from "../config/index.ts";
+import { getLogger } from "../utils/logger.ts";
+
+const log = getLogger("api");
 
 const BASE_URL = "https://api.todoist.com/api/v1";
 
@@ -179,9 +182,7 @@ export class TodoistClient {
       if (attempt > 0 && !skipNextBackoff) {
         const backoff = BASE_BACKOFF_MS * Math.pow(2, attempt - 1);
         const delay = addJitter(backoff);
-        process.stderr.write(
-          `[todoist-cli] Retry ${attempt}/${maxRetries} in ${Math.round(delay)}ms...\n`,
-        );
+        log.warn(`Retry ${attempt}/${maxRetries} in ${Math.round(delay)}ms...`);
         await sleep(delay);
       }
       skipNextBackoff = false;
@@ -238,9 +239,7 @@ export class TodoistClient {
 
         if (attempt < maxRetries) {
           const delay = addJitter(waitMs);
-          process.stderr.write(
-            `[todoist-cli] Rate limited (429). Retry ${attempt + 1}/${maxRetries} in ${Math.round(delay)}ms...\n`,
-          );
+          log.warn(`Rate limited (429). Retry ${attempt + 1}/${maxRetries} in ${Math.round(delay)}ms...`);
           await sleep(delay);
           skipNextBackoff = true; // already waited with rate-limit-specific delay
           continue;
@@ -291,6 +290,9 @@ export class TodoistClient {
         detail = bodyText;
       }
     }
+
+    const bodySnippet = bodyText.length > 200 ? bodyText.slice(0, 200) + "..." : bodyText;
+    log.error(`API error ${res.status} ${res.statusText} url=${res.url} body=${bodySnippet}`);
 
     if (res.status === 401) {
       throw new ApiError({

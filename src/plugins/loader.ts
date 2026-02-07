@@ -9,6 +9,9 @@ import { createPluginStorage } from "./storage.ts";
 import type { PluginStorageWithClose } from "./storage.ts";
 import { createApiProxy } from "./api-proxy.ts";
 import { CONFIG_DIR, getConfig } from "../config/index.ts";
+import { getLogger } from "../utils/logger.ts";
+
+const log = getLogger("plugins");
 
 const PLUGINS_DIR = join(CONFIG_DIR, "plugins");
 
@@ -144,8 +147,8 @@ function topologicalSort(
     if (!after) continue;
 
     if (!nameSet.has(after)) {
-      console.warn(
-        `[plugins] Plugin "${name}" declares after: "${after}", but "${after}" is not a known plugin. Ignoring dependency.`
+      log.warn(
+        `Plugin "${name}" declares after: "${after}", but "${after}" is not a known plugin. Ignoring dependency.`
       );
       continue;
     }
@@ -184,8 +187,8 @@ function topologicalSort(
     const unsorted = entries
       .filter(([name]) => !sorted.includes(name))
       .map(([name]) => name);
-    console.warn(
-      `[plugins] Circular dependency detected among plugins: ${unsorted.join(", ")}. Falling back to original order.`
+    log.warn(
+      `Circular dependency detected among plugins: ${unsorted.join(", ")}. Falling back to original order.`
     );
     return entries;
   }
@@ -255,18 +258,19 @@ export async function loadPlugins(
       ? resolve(CONFIG_DIR, pluginConfig.path)
       : join(PLUGINS_DIR, name);
     if (!existsSync(pluginDir)) {
-      console.warn(`[plugins] Directory not found for "${name}", skipping`);
+      log.warn(`Directory not found for "${name}", skipping`);
       continue;
     }
 
     try {
+      log.debug(`Loading plugin "${name}" from ${pluginDir}`);
       const manifestPath = join(pluginDir, "plugin.json");
       let manifest: PluginManifest | null = null;
       if (existsSync(manifestPath)) {
         try {
           manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as PluginManifest;
         } catch (parseErr) {
-          console.warn(`[plugins] Invalid plugin.json for "${name}":`, parseErr instanceof Error ? parseErr.message : parseErr);
+          log.warn(`Invalid plugin.json for "${name}": ${parseErr instanceof Error ? parseErr.message : parseErr}`);
           // Continue without manifest — will use default main path
         }
       }
@@ -274,8 +278,8 @@ export async function loadPlugins(
       // Version compatibility check
       const requiredVersion = manifest?.engines?.["todoist-cli"];
       if (requiredVersion && !satisfiesVersion(requiredVersion, CLI_VERSION)) {
-        console.warn(
-          `[plugins] Plugin "${name}" requires todoist-cli ${requiredVersion}, ` +
+        log.warn(
+          `Plugin "${name}" requires todoist-cli ${requiredVersion}, ` +
           `but current version is ${CLI_VERSION}. Skipping.`
         );
         continue;
@@ -287,7 +291,7 @@ export async function loadPlugins(
       const plugin: TodoistPlugin = mod.default ?? mod;
 
       if (!isValidPlugin(plugin)) {
-        console.warn(`[plugins] Plugin at "${pluginDir}" is not a valid TodoistPlugin (must have name, version, and valid lifecycle methods), skipping`);
+        log.warn(`Plugin at "${pluginDir}" is not a valid TodoistPlugin (must have name, version, and valid lifecycle methods), skipping`);
         continue;
       }
 
@@ -295,7 +299,7 @@ export async function loadPlugins(
       const storage = createPluginStorage(dataDir);
       storages.push(storage);
       const api = createApiProxy(hooks, manifest?.permissions);
-      const log = createLogger(plugin.name);
+      const pluginLog = createLogger(plugin.name);
 
       const { source: _, enabled: _e, after: _a, ...pluginSpecificConfig } = pluginConfig;
 
@@ -304,7 +308,7 @@ export async function loadPlugins(
         storage,
         config: pluginSpecificConfig,
         pluginDir,
-        log,
+        log: pluginLog,
       };
 
       if (plugin.onLoad) await plugin.onLoad(ctx);
@@ -404,8 +408,9 @@ export async function loadPlugins(
       }
 
       loaded.plugins.push({ plugin, ctx });
+      log.info(`Loaded plugin "${name}" v${plugin.version}`);
     } catch (err) {
-      console.error(`[plugins] Failed to load "${name}":`, err instanceof Error ? err.message : err);
+      log.error(`Failed to load "${name}": ${err instanceof Error ? err.message : err}`, err);
     }
   }
 
@@ -413,6 +418,7 @@ export async function loadPlugins(
 }
 
 export async function unloadPlugins(loaded: LoadedPlugins): Promise<void> {
+  log.debug(`Unloading ${loaded.plugins.length} plugin(s)`);
   const {
     views, extensions, palette, hooks,
     viewContextMap, keybindingContextMap, columnContextMap,
@@ -423,7 +429,7 @@ export async function unloadPlugins(loaded: LoadedPlugins): Promise<void> {
     try {
       if (plugin.onUnload) await plugin.onUnload(ctx);
     } catch (err) {
-      console.error(`[plugins] Error unloading "${plugin.name}":`, err);
+      log.error(`Error unloading "${plugin.name}"`, err);
     }
 
     // Clean up all registered views for this plugin

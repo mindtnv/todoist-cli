@@ -11,6 +11,7 @@ import { TaskDetailView } from "./views/TaskDetailView.tsx";
 import { StatsView } from "./views/StatsView.tsx";
 import { CompletedView } from "./views/CompletedView.tsx";
 import { ActivityView } from "./views/ActivityView.tsx";
+import { getLogger } from "../utils/logger.ts";
 import { createHookRegistry } from "../plugins/hook-registry.ts";
 import { createViewRegistry } from "../plugins/view-registry.ts";
 import { createExtensionRegistry } from "../plugins/extension-registry.ts";
@@ -24,6 +25,9 @@ class ErrorBoundary extends Component<
 > {
   override state = { error: null as Error | null };
   static getDerivedStateFromError(error: Error) { return { error }; }
+  override componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    getLogger("ui").error(`Uncaught error in UI: ${error.message}`, error);
+  }
   override render() {
     if (this.state.error) {
       return (
@@ -44,6 +48,9 @@ class PluginErrorBoundary extends Component<
 > {
   override state = { error: null as Error | null };
   static getDerivedStateFromError(error: Error) { return { error }; }
+  override componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    getLogger("ui").error(`Plugin "${this.props.pluginName}" crashed: ${error.message}`, error);
+  }
   override render() {
     if (this.state.error) {
       return (

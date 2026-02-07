@@ -28,6 +28,7 @@ import { parseQuickAdd, resolveProjectName, quickAddResultToParams } from "../ut
 import { getFilters, getAliases, setAlias, removeAlias } from "../config/index.ts";
 import { cliExit } from "../utils/exit.ts";
 import { batchCreateTasks } from "./commands/task/batch-helpers.ts";
+import { initLogger, getLogger } from "../utils/logger.ts";
 
 function tableSeparatorWidth(): number {
   return ID_WIDTH + 1 + PRI_WIDTH + 1 + getContentWidth() + 1 + getDueWidth() + 1 + 10;
@@ -142,7 +143,7 @@ async function runFilterCommand(
 program
   .name("todoist")
   .description("CLI tool for managing Todoist tasks")
-  .version("0.5.0")
+  .version("0.5.2")
   .option("--debug", "Enable debug output")
   .hook("preAction", () => {
     if (program.opts().debug) {
@@ -558,6 +559,10 @@ for (const [name, query] of Object.entries(savedFilters)) {
 }
 
 async function main() {
+  initLogger();
+  const log = getLogger("cli");
+  log.info("Starting todoist-cli v" + program.version());
+
   await loadCliPlugins(program);
 
   // Derive known commands dynamically after all commands (including plugins) are registered

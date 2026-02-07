@@ -32,20 +32,20 @@ export function parseDurationInput(input: string): number {
 
   // "1h30m", "2h15m"
   const hm = trimmed.match(/^(\d+)h\s*(\d+)m?$/);
-  if (hm) {
-    return (parseInt(hm[1]!, 10) * 60 + parseInt(hm[2]!, 10)) * 60 * 1000;
+  if (hm && hm[1] !== undefined && hm[2] !== undefined) {
+    return (parseInt(hm[1], 10) * 60 + parseInt(hm[2], 10)) * 60 * 1000;
   }
 
   // "2h", "1.5h"
   const h = trimmed.match(/^([\d.]+)h$/);
-  if (h) {
-    return Math.round(parseFloat(h[1]!) * 60 * 60 * 1000);
+  if (h && h[1] !== undefined) {
+    return Math.round(parseFloat(h[1]) * 60 * 60 * 1000);
   }
 
   // "30m", "90m"
   const m = trimmed.match(/^(\d+)m$/);
-  if (m) {
-    return parseInt(m[1]!, 10) * 60 * 1000;
+  if (m && m[1] !== undefined) {
+    return parseInt(m[1], 10) * 60 * 1000;
   }
 
   // Plain number = minutes
