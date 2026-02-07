@@ -1,0 +1,16 @@
+{
+  "name": "todoist-cli-official",
+  "description": "Official todoist-cli plugin marketplace",
+  "version": "1.0.0",
+  "plugins": [
+    {
+      "name": "time-tracking",
+      "source": "./plugins/time-tracking",
+      "version": "1.0.0",
+      "description": "Track time spent on tasks",
+      "author": "todoist-cli",
+      "category": "productivity",
+      "keywords": ["time", "tracking", "timer", "report"]
+    }
+  ]
+}

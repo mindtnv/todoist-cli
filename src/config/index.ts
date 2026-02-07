@@ -28,6 +28,11 @@ export interface SyncConfig {
   timeout: number;      // request timeout in seconds
 }
 
+export interface MarketplaceConfigEntry {
+  source: string;
+  auto_update?: boolean;
+}
+
 export interface Config {
   auth?: { api_token?: string };
   defaults?: Defaults;
@@ -35,6 +40,7 @@ export interface Config {
   plugins?: Record<string, Record<string, unknown>>;
   ui?: Partial<UiConfig>;
   sync?: Partial<SyncConfig>;
+  marketplaces?: Record<string, MarketplaceConfigEntry>;
 }
 
 function ensureConfigDir(): void {
@@ -189,4 +195,34 @@ export function removePluginEntry(name: string): void {
 
 export function getPluginDir(): string {
   return join(CONFIG_DIR, "plugins");
+}
+
+// Marketplace config
+
+export function getMarketplaces(): Record<string, MarketplaceConfigEntry> {
+  const config = getConfig();
+  const rawConfig = config as Record<string, unknown>;
+  const marketplaces = rawConfig.marketplaces as Record<string, MarketplaceConfigEntry> | undefined;
+  return marketplaces ?? {};
+}
+
+export function setMarketplace(name: string, entry: MarketplaceConfigEntry): void {
+  const config = getConfig();
+  const rawConfig = config as Record<string, unknown>;
+  if (!rawConfig.marketplaces) {
+    rawConfig.marketplaces = {};
+  }
+  const marketplaces = rawConfig.marketplaces as Record<string, MarketplaceConfigEntry>;
+  marketplaces[name] = entry;
+  saveConfig(config);
+}
+
+export function removeMarketplace(name: string): void {
+  const config = getConfig();
+  const rawConfig = config as Record<string, unknown>;
+  const marketplaces = rawConfig.marketplaces as Record<string, MarketplaceConfigEntry> | undefined;
+  if (marketplaces) {
+    delete marketplaces[name];
+  }
+  saveConfig(config);
 }

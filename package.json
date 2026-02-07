@@ -8,7 +8,7 @@
   },
   "files": [
     "dist",
-    "plugins"
+    "marketplace.json"
   ],
   "scripts": {
     "dev": "bun run src/cli/index.ts",
