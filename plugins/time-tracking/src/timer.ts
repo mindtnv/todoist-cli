@@ -18,10 +18,13 @@ interface ActiveTimer {
 const MAX_CACHE_SIZE = 200;
 
 export class TimerService {
+  private storage: PluginStorage;
   private active: ActiveTimer | null = null;
   private totalCache = new Map<string, number>();
 
-  constructor(private storage: PluginStorage) {}
+  constructor(storage: PluginStorage) {
+    this.storage = storage;
+  }
 
   async start(taskId: string): Promise<void> {
     // If paused for the same task — resume
