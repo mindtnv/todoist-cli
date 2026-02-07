@@ -1,11 +1,13 @@
 import { join } from "path";
-import { homedir } from "os";
+
 import {
   existsSync,
   mkdirSync,
   readFileSync,
   rmSync,
   cpSync,
+  symlinkSync,
+  lstatSync,
 } from "fs";
 import { execFileSync } from "child_process";
 import { getConfig, saveConfig, setPluginEntry, removePluginEntry } from "../config/index.ts";
@@ -21,7 +23,7 @@ import type {
 
 // ── Constants ──
 
-const CONFIG_DIR = join(homedir(), ".config", "todoist-cli");
+import { CONFIG_DIR } from "../config/index.ts";
 const MARKETPLACE_CACHE_DIR = join(CONFIG_DIR, "marketplace-cache");
 const PLUGINS_DIR = join(CONFIG_DIR, "plugins");
 const DEFAULT_MARKETPLACE = "github:mindtnv/todoist-cli";
@@ -62,8 +64,24 @@ function deriveNameFromSource(source: string): string {
   }
 }
 
+function lstatExists(path: string): boolean {
+  try { lstatSync(path); return true; } catch { return false; }
+}
+
 function isExternalSource(source: string | MarketplaceExternalSource): source is MarketplaceExternalSource {
   return typeof source === "object" && source !== null && "type" in source;
+}
+
+function isLocalMarketplace(source: string): boolean {
+  return !source.startsWith("github:") && !source.startsWith("http://") && !source.startsWith("https://");
+}
+
+function resolveLocalPluginPath(marketplaceSource: string, pluginSource: string): string | null {
+  if (pluginSource.startsWith("./") || pluginSource.startsWith("../")) {
+    const resolved = join(marketplaceSource, pluginSource);
+    return existsSync(resolved) ? resolved : null;
+  }
+  return existsSync(pluginSource) ? pluginSource : null;
 }
 
 function cloneGitRepo(url: string, targetDir: string, options?: { branch?: string; sha?: string }): void {
@@ -285,6 +303,11 @@ export async function installPlugin(
 
   const targetDir = join(PLUGINS_DIR, pluginName);
 
+  // Find the marketplace config to check if it's local
+  const allMarketplaces = getRegisteredMarketplaces();
+  const marketplaceConfig = allMarketplaces.find((m) => m.name === plugin.marketplace);
+  const isLocal = marketplaceConfig ? isLocalMarketplace(marketplaceConfig.source) : false;
+
   if (isExternalSource(plugin.source)) {
     // External source
     resolveExternalSource(plugin.source, targetDir);
@@ -292,29 +315,44 @@ export async function installPlugin(
     // String source
     const source = plugin.source;
     if (source.startsWith("./") || source.startsWith("../")) {
-      // Relative path within marketplace cache dir
-      const cacheDir = join(MARKETPLACE_CACHE_DIR, plugin.marketplace);
-      const sourcePath = join(cacheDir, source);
+      if (isLocal && marketplaceConfig) {
+        // Local marketplace: symlink directly to source for live development
+        const sourcePath = resolveLocalPluginPath(marketplaceConfig.source, source);
+        if (!sourcePath) {
+          throw new Error(`Plugin source path not found: ${join(marketplaceConfig.source, source)}`);
+        }
+        // Remove target if it exists (stale symlink or previous install)
+        if (existsSync(targetDir) || lstatExists(targetDir)) {
+          rmSync(targetDir, { recursive: true, force: true });
+        }
+        symlinkSync(sourcePath, targetDir);
+      } else {
+        // Remote marketplace: copy from cache
+        const cacheDir = join(MARKETPLACE_CACHE_DIR, plugin.marketplace);
+        const sourcePath = join(cacheDir, source);
 
-      if (!existsSync(sourcePath)) {
-        throw new Error(
-          `Plugin source path not found: ${sourcePath}`,
-        );
+        if (!existsSync(sourcePath)) {
+          throw new Error(
+            `Plugin source path not found: ${sourcePath}`,
+          );
+        }
+
+        ensureDir(targetDir);
+        cpSync(sourcePath, targetDir, { recursive: true });
       }
-
-      ensureDir(targetDir);
-      cpSync(sourcePath, targetDir, { recursive: true });
     } else if (source.startsWith("github:")) {
       const github = parseGitHubSource(source);
       if (!github) throw new Error(`Invalid GitHub source: ${source}`);
       cloneGitRepo(`https://github.com/${github.user}/${github.repo}.git`, targetDir);
     } else {
-      // Treat as local path
+      // Treat as local path — symlink for live development
       if (!existsSync(source)) {
         throw new Error(`Plugin source path not found: ${source}`);
       }
-      ensureDir(targetDir);
-      cpSync(source, targetDir, { recursive: true });
+      if (existsSync(targetDir) || lstatExists(targetDir)) {
+        rmSync(targetDir, { recursive: true, force: true });
+      }
+      symlinkSync(source, targetDir);
     }
   }
 
