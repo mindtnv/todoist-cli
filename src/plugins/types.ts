@@ -13,6 +13,7 @@ export interface PluginStorage {
   list(prefix?: string): Promise<string[]>;
   getTaskData<T>(taskId: string, key: string): Promise<T | null>;
   setTaskData<T>(taskId: string, key: string, value: T): Promise<void>;
+  transaction<T>(fn: () => T): T;
 }
 
 // ── Plugin Logger ──

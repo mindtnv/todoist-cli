@@ -66,6 +66,16 @@ function isExternalSource(source: string | MarketplaceExternalSource): source is
   return typeof source === "object" && source !== null && "type" in source;
 }
 
+function cloneGitRepo(url: string, targetDir: string, options?: { branch?: string; sha?: string }): void {
+  const args = ["clone"];
+  if (options?.branch) args.push("--branch", options.branch);
+  args.push(url, targetDir);
+  execFileSync("git", args, { stdio: "pipe" });
+  if (options?.sha) {
+    execFileSync("git", ["checkout", options.sha], { cwd: targetDir, stdio: "pipe" });
+  }
+}
+
 // ── Marketplace Registration ──
 
 export function getRegisteredMarketplaces(): MarketplaceConfig[] {
@@ -297,11 +307,7 @@ export async function installPlugin(
     } else if (source.startsWith("github:")) {
       const github = parseGitHubSource(source);
       if (!github) throw new Error(`Invalid GitHub source: ${source}`);
-      execFileSync(
-        "git",
-        ["clone", `https://github.com/${github.user}/${github.repo}.git`, targetDir],
-        { stdio: "pipe" },
-      );
+      cloneGitRepo(`https://github.com/${github.user}/${github.repo}.git`, targetDir);
     } else {
       // Treat as local path
       if (!existsSync(source)) {
@@ -348,28 +354,18 @@ function resolveExternalSource(
   switch (source.type) {
     case "github": {
       if (!source.repo) throw new Error("GitHub source requires a 'repo' field.");
-      const cloneArgs = ["clone"];
-      if (source.ref) cloneArgs.push("--branch", source.ref);
-      cloneArgs.push(`https://github.com/${source.repo}.git`, targetDir);
-      execFileSync("git", cloneArgs, { stdio: "pipe" });
-      if (source.sha) {
-        execFileSync("git", ["-C", targetDir, "checkout", source.sha], {
-          stdio: "pipe",
-        });
-      }
+      cloneGitRepo(`https://github.com/${source.repo}.git`, targetDir, {
+        branch: source.ref,
+        sha: source.sha,
+      });
       break;
     }
     case "git": {
       if (!source.url) throw new Error("Git source requires a 'url' field.");
-      const gitCloneArgs = ["clone"];
-      if (source.ref) gitCloneArgs.push("--branch", source.ref);
-      gitCloneArgs.push(source.url, targetDir);
-      execFileSync("git", gitCloneArgs, { stdio: "pipe" });
-      if (source.sha) {
-        execFileSync("git", ["-C", targetDir, "checkout", source.sha], {
-          stdio: "pipe",
-        });
-      }
+      cloneGitRepo(source.url, targetDir, {
+        branch: source.ref,
+        sha: source.sha,
+      });
       break;
     }
     case "npm": {

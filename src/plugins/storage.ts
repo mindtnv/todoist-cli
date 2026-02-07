@@ -94,6 +94,10 @@ export function createPluginStorage(dataDir: string): PluginStorageWithClose {
       tdSet.run(taskId, key, JSON.stringify(value));
     },
 
+    transaction<T>(fn: () => T): T {
+      return db.transaction(fn)();
+    },
+
     close() {
       db.close();
     },

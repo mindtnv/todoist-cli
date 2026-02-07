@@ -1,7 +1,6 @@
-import { useState, useEffect } from "react";
 import { Box, Text, useInput } from "ink";
 import { getStats } from "../../api/stats.ts";
-import type { UserStats } from "../../api/types.ts";
+import { useAsyncData } from "../hooks/useAsyncData.ts";
 
 interface StatsViewProps {
   onBack: () => void;
@@ -44,29 +43,7 @@ function formatWeekLabel(fromStr: string): string {
 }
 
 export function StatsView({ onBack }: StatsViewProps) {
-  const [stats, setStats] = useState<UserStats | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    getStats()
-      .then((s) => {
-        if (!cancelled) {
-          setStats(s);
-          setLoading(false);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load stats");
-          setLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { data: stats, loading, error } = useAsyncData(() => getStats());
 
   useInput((input, key) => {
     if (key.escape || input === "q") {

@@ -225,6 +225,7 @@ export function TaskList({
                   isMarked={selectedIds?.has(item.task.id)}
                   depth={item.depth}
                   searchQuery={searchQuery}
+                  termWidth={stdout?.columns ?? 80}
                   pluginColumns={pluginColumns}
                   pluginColumnContextMap={pluginColumnContextMap}
                 />
@@ -241,6 +242,7 @@ export function TaskList({
             isMarked={selectedIds?.has(item.task.id)}
             depth={item.depth}
             searchQuery={searchQuery}
+            termWidth={stdout?.columns ?? 80}
             pluginColumns={pluginColumns}
             pluginColumnContextMap={pluginColumnContextMap}
           />

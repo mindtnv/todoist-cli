@@ -27,6 +27,7 @@ import { formatTasksDelimited } from "../utils/output.ts";
 import { parseQuickAdd, resolveProjectName, quickAddResultToParams } from "../utils/quick-add.ts";
 import { getFilters } from "../config/index.ts";
 import { cliExit } from "../utils/exit.ts";
+import { batchCreateTasks } from "./commands/task/batch-helpers.ts";
 
 function tableSeparatorWidth(): number {
   return ID_WIDTH + 1 + PRI_WIDTH + 1 + getContentWidth() + 1 + getDueWidth() + 1 + 10;
@@ -81,29 +82,6 @@ function printTimeline(tasks: Task[]): void {
   }
 }
 
-function printShortcutTable(tasks: Task[]): void {
-  const CONTENT_WIDTH = getContentWidth();
-  const DUE_WIDTH = getDueWidth();
-
-  if (tasks.length === 0) {
-    console.log(chalk.dim("No tasks found."));
-    return;
-  }
-
-  const header = `${padEnd("ID", ID_WIDTH)} ${padEnd("Pri", PRI_WIDTH)} ${padEnd("Content", CONTENT_WIDTH)} ${padEnd("Due", DUE_WIDTH)} Labels`;
-  console.log(chalk.bold(header));
-  console.log(chalk.dim("-".repeat(tableSeparatorWidth())));
-
-  for (const t of tasks) {
-    const id = padEnd(t.id, ID_WIDTH);
-    const pri = padEnd(priorityColor(t.priority)(`p${t.priority}`), PRI_WIDTH);
-    const maxContent = CONTENT_WIDTH - 2;
-    const content = padEnd(t.content.length > maxContent ? t.content.slice(0, maxContent - 1) + "..." : t.content, CONTENT_WIDTH);
-    const due = padEnd(t.due?.date ?? "", DUE_WIDTH);
-    const labels = t.labels.length > 0 ? chalk.cyan(t.labels.join(", ")) : "";
-    console.log(`${id} ${pri} ${content} ${due} ${labels}`);
-  }
-}
 
 async function runWithWatch(interval: number, fn: () => Promise<void>): Promise<never> {
   while (true) {
@@ -168,7 +146,7 @@ program
 
       console.log(chalk.bold("Today & Overdue"));
       console.log("");
-      printShortcutTable(tasks);
+      printTaskTable(tasks);
     };
     try {
       if (opts.watch !== undefined) {
@@ -203,7 +181,7 @@ program
 
       console.log(chalk.bold("Inbox"));
       console.log("");
-      printShortcutTable(tasks);
+      printTaskTable(tasks);
     };
     try {
       if (opts.watch !== undefined) {
@@ -327,7 +305,7 @@ program
 
       console.log(chalk.bold("Overdue Tasks"));
       console.log("");
-      printShortcutTable(tasks);
+      printTaskTable(tasks);
     } catch (err) {
       handleError(err);
     }
@@ -401,7 +379,7 @@ program
 
       console.log(chalk.bold(`Search: "${query}"`));
       console.log("");
-      printShortcutTable(tasks);
+      printTaskTable(tasks);
     } catch (err) {
       handleError(err);
     }
@@ -449,29 +427,12 @@ program
           console.error(chalk.red("No tasks provided on stdin."));
           cliExit(1);
         }
-        let success = 0;
-        let failed = 0;
-        for (const line of lines) {
-          try {
-            const parsed = parseQuickAdd(line);
-            const params = await quickAddResultToParams(parsed);
-            // Shared flags override
-            if (opts.project) {
-              const resolvedId = await resolveProjectName(opts.project);
-              params.project_id = resolvedId ?? opts.project;
-            }
-            if (opts.priority) params.priority = parseInt(opts.priority, 10) as Priority;
-            if (opts.label.length > 0) params.labels = opts.label;
-            if (opts.due) params.due_string = opts.due;
-
-            await createTask(params);
-            success++;
-          } catch (err) {
-            failed++;
-            console.error(chalk.red(`Failed to create "${line.trim()}": ${err instanceof Error ? err.message : err}`));
-          }
-        }
-        console.log(chalk.green(`Created ${success} task${success === 1 ? "" : "s"}`) + (failed > 0 ? chalk.red(` (${failed} failed)`) : ""));
+        await batchCreateTasks(lines, {
+          project: opts.project,
+          priority: opts.priority,
+          labels: opts.label,
+          due: opts.due,
+        });
         cliExit(0);
       }
 
@@ -559,7 +520,7 @@ for (const [name, query] of Object.entries(savedFilters)) {
         }
         console.log(chalk.bold(name) + chalk.dim(` (${query})`));
         console.log("");
-        printShortcutTable(tasks);
+        printTaskTable(tasks);
       };
       try {
         if (opts.watch !== undefined) {

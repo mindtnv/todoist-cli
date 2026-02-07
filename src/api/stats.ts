@@ -1,4 +1,5 @@
 import { api } from "./client.ts";
+import { requireToken } from "../config/index.ts";
 import type { UserStats, DayStats, WeekStats } from "./types.ts";
 
 interface UserResponse {
@@ -17,13 +18,21 @@ interface SyncStatsResponse {
 }
 
 export async function getStats(): Promise<UserStats> {
-  const [user, syncData] = await Promise.all([
-    api.get<UserResponse>("/user"),
-    api.post<SyncStatsResponse>("/sync", {
-      resource_types: ["stats"],
+  const syncRes = await fetch("https://api.todoist.com/sync/v9/sync", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${requireToken()}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      resource_types: JSON.stringify(["stats"]),
       sync_token: "*",
     }),
-  ]);
+  });
+  if (!syncRes.ok) throw new Error(`Sync API error: ${syncRes.status}`);
+  const syncData = (await syncRes.json()) as SyncStatsResponse;
+
+  const user = await api.get<UserResponse>("/user");
 
   const stats = syncData.stats;
 

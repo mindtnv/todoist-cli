@@ -161,7 +161,7 @@ export async function loadPlugins(
       const dataDir = join(pluginDir, "data");
       const storage = createPluginStorage(dataDir);
       storages.push(storage);
-      const api = createApiProxy(hooks);
+      const api = createApiProxy(hooks, manifest?.permissions);
       const log = createLogger(plugin.name);
 
       const { source: _, enabled: _e, after: _a, ...pluginSpecificConfig } = pluginConfig;

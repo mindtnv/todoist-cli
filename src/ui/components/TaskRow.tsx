@@ -10,6 +10,7 @@ interface TaskRowProps {
   isMarked?: boolean;
   depth?: number;
   searchQuery?: string;
+  termWidth: number;
   pluginColumns?: TaskColumnDefinition[];
   pluginColumnContextMap?: Map<string, PluginContext>;
 }
@@ -39,7 +40,7 @@ const priorityConfig: Record<number, { dot: string; color: string }> = {
   1: { dot: "\u25CB", color: "gray" },
 };
 
-function TaskRowInner({ task, isSelected, isMarked = false, depth = 0, searchQuery, pluginColumns, pluginColumnContextMap }: TaskRowProps) {
+function TaskRowInner({ task, isSelected, isMarked = false, depth = 0, searchQuery, termWidth, pluginColumns, pluginColumnContextMap }: TaskRowProps) {
   const checkbox = task.is_completed ? "\u2611" : "\u2610";
   const prio = priorityConfig[task.priority] ?? { dot: "\u25CB", color: "gray" };
   const dueInfo = task.due ? formatRelativeDue(task.due.date) : null;
@@ -55,7 +56,6 @@ function TaskRowInner({ task, isSelected, isMarked = false, depth = 0, searchQue
   const commentText = commentCount > 0 ? `\u2709 ${commentCount}` : "";
 
   // Truncate content to fit terminal width
-  const termWidth = process.stdout.columns ?? 80;
   const markerWidth = 2; // "* " or "  "
   const indentWidth = indent.length;
   const checkboxPrioWidth = 4; // "X D " (checkbox + space + dot + space)
@@ -111,6 +111,7 @@ function arePropsEqual(prev: TaskRowProps, next: TaskRowProps): boolean {
   if (prev.isSelected !== next.isSelected) return false;
   if (prev.isMarked !== next.isMarked) return false;
   if ((prev.depth ?? 0) !== (next.depth ?? 0)) return false;
+  if (prev.termWidth !== next.termWidth) return false;
 
   // Compare due
   const prevDue = prev.task.due;

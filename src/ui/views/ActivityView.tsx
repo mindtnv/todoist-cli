@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import { getActivity } from "../../api/activity.ts";
 import type { ActivityEvent } from "../../api/types.ts";
+import { useAsyncData } from "../hooks/useAsyncData.ts";
 
 interface ActivityViewProps {
   onBack: () => void;
@@ -62,34 +63,13 @@ function eventDescription(event: ActivityEvent): string {
 }
 
 export function ActivityView({ onBack }: ActivityViewProps) {
-  const [events, setEvents] = useState<ActivityEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: events, loading, error } = useAsyncData(() => getActivity(50));
   const [scrollOffset, setScrollOffset] = useState(0);
   const { stdout } = useStdout();
 
-  useEffect(() => {
-    let cancelled = false;
-    getActivity(50)
-      .then((items) => {
-        if (!cancelled) {
-          setEvents(items);
-          setLoading(false);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load activity");
-          setLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const viewHeight = Math.max((stdout?.rows ?? 24) - 8, 5);
-  const maxScroll = Math.max(0, events.length - viewHeight);
+  const eventsList = events ?? [];
+  const maxScroll = Math.max(0, eventsList.length - viewHeight);
 
   useInput((input, key) => {
     if (key.escape || input === "q") {
@@ -154,7 +134,7 @@ export function ActivityView({ onBack }: ActivityViewProps) {
     );
   }
 
-  if (events.length === 0) {
+  if (eventsList.length === 0) {
     return (
       <Box flexDirection="column" width="100%" height="100%">
         <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor="cyan" paddingX={2} paddingY={1}>
@@ -170,14 +150,14 @@ export function ActivityView({ onBack }: ActivityViewProps) {
     );
   }
 
-  const visibleEvents = events.slice(scrollOffset, scrollOffset + viewHeight);
+  const visibleEvents = eventsList.slice(scrollOffset, scrollOffset + viewHeight);
 
   return (
     <Box flexDirection="column" width="100%" height="100%">
       <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor="cyan" paddingX={2} paddingY={1}>
         <Box marginBottom={1}>
           <Text bold color="cyan">Activity Log</Text>
-          <Text color="gray">{`  (${events.length} events)`}</Text>
+          <Text color="gray">{`  (${eventsList.length} events)`}</Text>
         </Box>
 
         <Box flexDirection="column">
@@ -204,7 +184,7 @@ export function ActivityView({ onBack }: ActivityViewProps) {
         </Text>
         {maxScroll > 0 && (
           <Text color="gray" dimColor>
-            {`${scrollOffset + 1}-${Math.min(scrollOffset + viewHeight, events.length)}/${events.length}`}
+            {`${scrollOffset + 1}-${Math.min(scrollOffset + viewHeight, eventsList.length)}/${eventsList.length}`}
           </Text>
         )}
       </Box>

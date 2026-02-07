@@ -12,6 +12,7 @@ import { isClearValue } from "../../../utils/clear-values.ts";
 import { readStdin } from "./helpers.ts";
 import { resolveTaskArg, resolveProjectArg, resolveSectionArg } from "../../../utils/resolve.ts";
 import { getCliHookRegistry } from "../../plugin-loader.ts";
+import { batchCreateTasks } from "./batch-helpers.ts";
 
 function askQuestion(rl: ReturnType<typeof createInterface>, prompt: string): Promise<string> {
   return new Promise((resolve) => {
@@ -164,31 +165,15 @@ Examples:
             console.error(chalk.red("No tasks provided on stdin."));
             cliExit(1);
           }
-          let success = 0;
-          let failed = 0;
-          for (const line of lines) {
-            try {
-              const parsed = parseQuickAdd(line);
-              const params = await quickAddResultToParams(parsed);
-              // Shared flags override parsed values
-              if (opts.project) params.project_id = await resolveProjectArg(opts.project);
-              if (opts.priority) params.priority = parseInt(opts.priority, 10) as Priority;
-              if (opts.label.length > 0) params.labels = opts.label;
-              if (opts.due) params.due_string = opts.due;
-              if (opts.deadline) params.deadline_date = opts.deadline;
-              if (opts.parent) params.parent_id = await resolveTaskArg(opts.parent);
-              if (opts.section) params.section_id = await resolveSectionArg(opts.section, params.project_id);
-
-              try { await hooks?.emit("task.creating", { params }); } catch { /* hook errors non-fatal */ }
-              const batchResult = await createTask(params);
-              try { await hooks?.emit("task.created", { task: batchResult }); } catch { /* hook errors non-fatal */ }
-              success++;
-            } catch (err) {
-              failed++;
-              console.error(chalk.red(`Failed to create "${line.trim()}": ${err instanceof Error ? err.message : err}`));
-            }
-          }
-          console.log(chalk.green(`Created ${success} task${success === 1 ? "" : "s"}`) + (failed > 0 ? chalk.red(` (${failed} failed)`) : ""));
+          await batchCreateTasks(lines, {
+            project: opts.project,
+            priority: opts.priority,
+            labels: opts.label,
+            due: opts.due,
+            deadline: opts.deadline,
+            parent: opts.parent,
+            section: opts.section,
+          }, hooks);
           cliExit(0);
         }
 

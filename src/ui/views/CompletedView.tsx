@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import { getCompletedTasks } from "../../api/completed.ts";
 import { reopenTask } from "../../api/tasks.ts";
 import type { CompletedTask } from "../../api/types.ts";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
+import { useAsyncData } from "../hooks/useAsyncData.ts";
 
 interface CompletedViewProps {
   onBack: () => void;
@@ -59,42 +60,14 @@ function groupByDate(tasks: CompletedTask[]): DateGroup[] {
 }
 
 export function CompletedView({ onBack }: CompletedViewProps) {
-  const [tasks, setTasks] = useState<CompletedTask[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: tasks, loading, error, refetch } = useAsyncData(() => getCompletedTasks());
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [confirmReopen, setConfirmReopen] = useState<CompletedTask | null>(null);
   const { stdout } = useStdout();
 
-  const [loadTrigger, setLoadTrigger] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    getCompletedTasks()
-      .then((items) => {
-        if (!cancelled) {
-          setTasks(items);
-          setLoading(false);
-          setSelectedIndex(0);
-          setScrollOffset(0);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load completed tasks");
-          setLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [loadTrigger]);
-
-  const groups = groupByDate(tasks);
+  const groups = groupByDate(tasks ?? []);
 
   // Build flat list of renderable lines for scrolling
   const lines: Array<{ type: "header"; label: string } | { type: "task"; task: CompletedTask }> = [];
@@ -120,7 +93,9 @@ export function CompletedView({ onBack }: CompletedViewProps) {
       await reopenTask(task.task_id);
       setStatusMessage(`Task "${task.content}" reopened successfully`);
       setTimeout(() => setStatusMessage(null), 3000);
-      setLoadTrigger((n) => n + 1);
+      setSelectedIndex(0);
+      setScrollOffset(0);
+      refetch();
     } catch (err) {
       setStatusMessage(`Error: ${err instanceof Error ? err.message : "Failed to reopen task"}`);
       setTimeout(() => setStatusMessage(null), 5000);
@@ -255,7 +230,7 @@ export function CompletedView({ onBack }: CompletedViewProps) {
     );
   }
 
-  if (tasks.length === 0) {
+  if (!tasks || tasks.length === 0) {
     return (
       <Box flexDirection="column" width="100%" height="100%">
         <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor="cyan" paddingX={2} paddingY={1}>
@@ -278,7 +253,7 @@ export function CompletedView({ onBack }: CompletedViewProps) {
       <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor="cyan" paddingX={2} paddingY={1}>
         <Box marginBottom={1}>
           <Text bold color="cyan">Completed Tasks</Text>
-          <Text color="gray">{`  (${tasks.length} tasks)`}</Text>
+          <Text color="gray">{`  (${tasks?.length ?? 0} tasks)`}</Text>
         </Box>
 
         <Box flexDirection="column">
