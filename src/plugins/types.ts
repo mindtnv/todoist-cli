@@ -32,6 +32,7 @@ export interface PluginLogger {
 
 export interface PluginUiApi {
   showStatus(message: string): void;
+  notify(message: string, opts?: { level?: "info" | "success" | "warning" | "error"; duration?: number; persistent?: boolean }): void;
   navigate(view: string): void;
   openModal(modalId: string): void;
   refreshTasks(): void;
@@ -327,22 +328,40 @@ export interface KeybindingDefinition {
   action: (ctx: PluginContext, currentTask: Task | null) => Promise<{ statusMessage?: string } | void>;
 }
 
+export interface SidebarItemDefinition {
+  id: string;
+  label: string;
+  icon?: string;
+  onSelect: () => void;
+  badge?: string | number;
+}
+
+export interface SidebarSectionDefinition {
+  id: string;
+  label: string;
+  position: number;  // lower = higher in sidebar
+  items: SidebarItemDefinition[];
+}
+
 export interface ExtensionRegistry {
   addTaskColumn(column: TaskColumnDefinition): void;
   addDetailSection(section: DetailSectionDefinition): void;
   addKeybinding(binding: KeybindingDefinition): void;
   addStatusBarItem(item: StatusBarItemDefinition): void;
   addModal(definition: ModalDefinition): void;
+  addSidebarSection(section: SidebarSectionDefinition): void;
   removeTaskColumn(id: string): void;
   removeDetailSection(id: string): void;
   removeKeybinding(key: string): void;
   removeStatusBarItem(id: string): void;
   removeModal(id: string): void;
+  removeSidebarSection(id: string): void;
   getTaskColumns(): TaskColumnDefinition[];
   getDetailSections(): DetailSectionDefinition[];
   getKeybindings(): KeybindingDefinition[];
   getStatusBarItems(): StatusBarItemDefinition[];
   getModals(): ModalDefinition[];
+  getSidebarSections(): SidebarSectionDefinition[];
 }
 
 // ── Palette Registry ──

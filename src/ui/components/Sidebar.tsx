@@ -4,7 +4,7 @@ import type { Project, Label, Section } from "../../api/types.ts";
 import { getSections } from "../../api/sections.ts";
 import { mapTodoistColor } from "../../utils/colors.ts";
 import { getLocalDateString } from "../../utils/date-format.ts";
-import type { PluginViewDefinition } from "../../plugins/types.ts";
+import type { PluginViewDefinition, SidebarSectionDefinition } from "../../plugins/types.ts";
 import { SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, MIN_VIEW_HEIGHT, DEFAULT_TERMINAL_ROWS } from "../layout.ts";
 
 const SIDEBAR_ICONS: Record<string, string> = {
@@ -19,9 +19,10 @@ const SIDEBAR_ICONS: Record<string, string> = {
 export interface SidebarItem {
   id: string;
   label: string;
-  type: "builtin" | "separator" | "project" | "label" | "section" | "view";
+  type: "builtin" | "separator" | "project" | "label" | "section" | "view" | "plugin-item";
   color?: string;
   taskCount?: number;
+  badge?: string;
 }
 
 interface SidebarProps {
@@ -35,6 +36,7 @@ interface SidebarProps {
   onIndexChange: (index: number) => void;
   onNavigate?: (view: string) => void;
   pluginViews?: PluginViewDefinition[];
+  pluginSidebarSections?: SidebarSectionDefinition[];
 }
 
 export function buildSidebarItems(
@@ -44,6 +46,7 @@ export function buildSidebarItems(
   sections?: Section[],
   activeProjectId?: string,
   pluginViews?: PluginViewDefinition[],
+  pluginSidebarSections?: SidebarSectionDefinition[],
 ): SidebarItem[] {
   const taskCountByProject = new Map<string, number>();
   const taskCountByLabel = new Map<string, number>();
@@ -129,6 +132,25 @@ export function buildSidebarItems(
     }
   }
 
+  // Insert plugin sidebar sections at their declared positions.
+  // Position determines order among plugin sections; they are appended
+  // after the normal items, sorted by position (lower = first).
+  const sortedPluginSections = [...(pluginSidebarSections ?? [])].sort(
+    (a, b) => a.position - b.position,
+  );
+  for (const ps of sortedPluginSections) {
+    items.push({ id: `sep-psec-${ps.id}`, label: ps.label, type: "separator" });
+    for (const pi of ps.items) {
+      items.push({
+        id: `psec-${ps.id}-${pi.id}`,
+        label: pi.label,
+        type: "plugin-item",
+        color: "magenta",
+        badge: pi.badge != null ? String(pi.badge) : undefined,
+      });
+    }
+  }
+
   return items;
 }
 
@@ -143,6 +165,7 @@ export function Sidebar({
   onIndexChange,
   onNavigate,
   pluginViews,
+  pluginSidebarSections,
 }: SidebarProps) {
   const [sections, setSections] = useState<Section[]>([]);
   const { stdout } = useStdout();
@@ -168,11 +191,11 @@ export function Sidebar({
   }, [activeProjectId]);
 
   const items = useMemo(
-    () => buildSidebarItems(projects, labels, tasks, sections, activeProjectId, pluginViews),
-    [projects, labels, tasks, sections, activeProjectId, pluginViews]
+    () => buildSidebarItems(projects, labels, tasks, sections, activeProjectId, pluginViews, pluginSidebarSections),
+    [projects, labels, tasks, sections, activeProjectId, pluginViews, pluginSidebarSections]
   );
 
-  // Build icon map including plugin view icons
+  // Build icon map including plugin view icons and plugin sidebar item icons
   const iconMap = useMemo(() => {
     const icons: Record<string, string> = { ...SIDEBAR_ICONS };
     for (const pv of pluginViews ?? []) {
@@ -180,8 +203,26 @@ export function Sidebar({
         icons[`plugin-${pv.name}`] = pv.sidebar.icon;
       }
     }
+    for (const ps of pluginSidebarSections ?? []) {
+      for (const pi of ps.items) {
+        if (pi.icon) {
+          icons[`psec-${ps.id}-${pi.id}`] = pi.icon;
+        }
+      }
+    }
     return icons;
-  }, [pluginViews]);
+  }, [pluginViews, pluginSidebarSections]);
+
+  // Build callback map for plugin sidebar items
+  const pluginItemCallbacks = useMemo(() => {
+    const map = new Map<string, () => void>();
+    for (const ps of pluginSidebarSections ?? []) {
+      for (const pi of ps.items) {
+        map.set(`psec-${ps.id}-${pi.id}`, pi.onSelect);
+      }
+    }
+    return map;
+  }, [pluginSidebarSections]);
 
   // Compute adaptive sidebar width: clamp between 20 and 36
   const sidebarWidth = useMemo(() => {
@@ -224,7 +265,10 @@ export function Sidebar({
         if (next < items.length) onIndexChange(next);
       } else if (key.return) {
         const item = items[selectedIndex];
-        if (item && item.type === "view" && onNavigate) {
+        if (item && item.type === "plugin-item") {
+          const cb = pluginItemCallbacks.get(item.id);
+          if (cb) cb();
+        } else if (item && item.type === "view" && onNavigate) {
           const viewName = item.id.startsWith("plugin-")
             ? item.id.replace("plugin-", "")
             : item.id.replace("view-", "");
@@ -263,7 +307,7 @@ export function Sidebar({
             }
             const isSelected = i === selectedIndex && isFocused;
             const itemColor = isSelected ? "black" : item.color ?? (item.type === "builtin" ? "white" : "cyan");
-            const countStr = item.taskCount != null ? ` (${item.taskCount})` : "";
+            const countStr = item.taskCount != null ? ` (${item.taskCount})` : item.badge ? ` ${item.badge}` : "";
             const prefix = i === selectedIndex ? "> " : "  ";
             const icon = iconMap[item.id];
             const iconPrefix = icon ? `${icon} ` : "";

@@ -367,11 +367,18 @@ export async function loadPlugins(
           removeModal(id) {
             extensions.removeModal(id);
           },
+          addSidebarSection(section) {
+            extensions.addSidebarSection(section);
+          },
+          removeSidebarSection(id) {
+            extensions.removeSidebarSection(id);
+          },
           getTaskColumns: () => extensions.getTaskColumns(),
           getDetailSections: () => extensions.getDetailSections(),
           getKeybindings: () => extensions.getKeybindings(),
           getStatusBarItems: () => extensions.getStatusBarItems(),
           getModals: () => extensions.getModals(),
+          getSidebarSections: () => extensions.getSidebarSections(),
         };
         plugin.registerExtensions(trackingExtRegistry);
       }

@@ -51,6 +51,7 @@ export interface TasksViewContextValue {
     formatPreview?: (value: string) => string;
   } | null;
   showStatus?: (message: string) => void;
+  notify?: (message: string, opts?: { level?: "info" | "success" | "warning" | "error"; duration?: number; persistent?: boolean }) => void;
   navigate?: (view: string) => void;
   refreshTasks?: () => Promise<void>;
 }
@@ -75,6 +76,9 @@ export function createPluginUiApi(ctx: TasksViewContextValue): PluginUiApi {
   return {
     showStatus(message: string) {
       ctx.showStatus?.(message);
+    },
+    notify(message: string, opts?: { level?: "info" | "success" | "warning" | "error"; duration?: number; persistent?: boolean }) {
+      ctx.notify?.(message, opts);
     },
     navigate(view: string) {
       ctx.navigate?.(view);

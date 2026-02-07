@@ -39,6 +39,7 @@ export interface Config {
   auth?: { api_token?: string };
   defaults?: Defaults;
   filters?: Record<string, string>;
+  aliases?: Record<string, string>;
   plugins?: Record<string, Record<string, unknown>>;
   ui?: Partial<UiConfig>;
   sync?: Partial<SyncConfig>;
@@ -49,13 +50,14 @@ const VALID_UI_THEMES: UiTheme[] = ["default", "minimal", "compact"];
 const VALID_DATE_FORMATS: DateFormat[] = ["relative", "absolute", "iso"];
 
 const KNOWN_TOP_LEVEL_KEYS = new Set([
-  "auth", "defaults", "filters", "plugins", "ui", "sync", "marketplaces",
+  "auth", "defaults", "filters", "aliases", "plugins", "ui", "sync", "marketplaces",
 ]);
 
 export const DEFAULT_CONFIG: Config = {
   auth: {},
   defaults: {},
   filters: {},
+  aliases: {},
   plugins: {},
   ui: {
     theme: "default",
@@ -252,6 +254,20 @@ export function validateConfig(raw: unknown): Config {
     }
   }
 
+  // Validate aliases section
+  if (obj.aliases !== undefined) {
+    if (typeof obj.aliases !== "object" || obj.aliases === null || Array.isArray(obj.aliases)) {
+      errors.push('Config error: aliases must be an object');
+    } else {
+      const aliases = obj.aliases as Record<string, unknown>;
+      for (const [name, value] of Object.entries(aliases)) {
+        if (typeof name !== "string" || typeof value !== "string") {
+          errors.push(`Config error: aliases.${name} must be a string, got ${JSON.stringify(value)}`);
+        }
+      }
+    }
+  }
+
   // Validate marketplaces section
   if (obj.marketplaces !== undefined) {
     if (typeof obj.marketplaces !== "object" || obj.marketplaces === null || Array.isArray(obj.marketplaces)) {
@@ -392,6 +408,27 @@ export function removeFilter(name: string): boolean {
   const config = getConfig();
   if (!config.filters || !(name in config.filters)) return false;
   delete config.filters[name];
+  saveConfig(config);
+  return true;
+}
+
+// Aliases
+
+export function getAliases(): Record<string, string> {
+  const config = getConfig();
+  return config.aliases ?? {};
+}
+
+export function setAlias(name: string, command: string): void {
+  const config = getConfig();
+  config.aliases = { ...config.aliases, [name]: command };
+  saveConfig(config);
+}
+
+export function removeAlias(name: string): boolean {
+  const config = getConfig();
+  if (!config.aliases || !(name in config.aliases)) return false;
+  delete config.aliases[name];
   saveConfig(config);
   return true;
 }

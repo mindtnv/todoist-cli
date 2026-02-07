@@ -4,6 +4,7 @@ import type {
   KeybindingDefinition,
   StatusBarItemDefinition,
   ModalDefinition,
+  SidebarSectionDefinition,
   ExtensionRegistry,
 } from "./types.ts";
 
@@ -13,6 +14,7 @@ export function createExtensionRegistry(): ExtensionRegistry {
   const keybindings: KeybindingDefinition[] = [];
   const statusBarItems: StatusBarItemDefinition[] = [];
   const modals: ModalDefinition[] = [];
+  const sidebarSections: SidebarSectionDefinition[] = [];
 
   return {
     addTaskColumn(column: TaskColumnDefinition) {
@@ -80,10 +82,24 @@ export function createExtensionRegistry(): ExtensionRegistry {
       if (idx !== -1) modals.splice(idx, 1);
     },
 
+    addSidebarSection(section: SidebarSectionDefinition) {
+      if (sidebarSections.some(s => s.id === section.id)) {
+        console.warn(`[plugin] Sidebar section "${section.id}" already registered, skipping`);
+        return;
+      }
+      sidebarSections.push(section);
+    },
+
+    removeSidebarSection(id: string) {
+      const idx = sidebarSections.findIndex(s => s.id === id);
+      if (idx !== -1) sidebarSections.splice(idx, 1);
+    },
+
     getTaskColumns: () => [...columns],
     getDetailSections: () => [...sections],
     getKeybindings: () => [...keybindings],
     getStatusBarItems: () => [...statusBarItems],
     getModals: () => [...modals],
+    getSidebarSections: () => [...sidebarSections].sort((a, b) => a.position - b.position),
   };
 }

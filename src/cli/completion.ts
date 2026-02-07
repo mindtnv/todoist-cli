@@ -333,6 +333,246 @@ async function updateCompletionCache(): Promise<void> {
   }
 }
 
+// ── Dynamic Completion Generation ──
+
+/**
+ * Extracts all command names (including nested subcommands) from a Commander
+ * program instance. Returns fully-qualified names for subcommands using
+ * dot notation, e.g. ["task", "task.add", "task.list", "project", "project.create"].
+ */
+export function getRegisteredCommands(program: Command): string[] {
+  const result: string[] = [];
+
+  function walk(cmd: Command, prefix: string): void {
+    for (const sub of cmd.commands) {
+      const name = prefix ? `${prefix}.${sub.name()}` : sub.name();
+      result.push(name);
+      walk(sub, name);
+    }
+  }
+
+  walk(program, "");
+  return result;
+}
+
+/**
+ * Generates a shell completion script using the provided command list instead
+ * of hardcoded command names. This allows plugin-registered commands to be
+ * included in completions.
+ *
+ * The generated scripts include the same dynamic project/label cache completion
+ * as the static scripts, but use the provided `commands` array for command names.
+ */
+export function generateDynamicCompletion(
+  shell: "bash" | "zsh" | "fish",
+  commands: string[],
+): string {
+  // Separate top-level commands from subcommands
+  const topLevel: string[] = [];
+  const subcommands = new Map<string, string[]>();
+
+  for (const cmd of commands) {
+    const parts = cmd.split(".");
+    if (parts.length === 1) {
+      topLevel.push(parts[0]!);
+    } else if (parts.length === 2) {
+      const parent = parts[0]!;
+      const child = parts[1]!;
+      if (!subcommands.has(parent)) subcommands.set(parent, []);
+      subcommands.get(parent)!.push(child);
+    }
+    // Deeper nesting (3+) is ignored for shell completion simplicity
+  }
+
+  switch (shell) {
+    case "bash":
+      return generateDynamicBash(topLevel, subcommands);
+    case "zsh":
+      return generateDynamicZsh(topLevel, subcommands);
+    case "fish":
+      return generateDynamicFish(topLevel, subcommands);
+  }
+}
+
+function generateDynamicBash(
+  topLevel: string[],
+  subcommands: Map<string, string[]>,
+): string {
+  const topLevelStr = topLevel.join(" ");
+
+  // Build case branches for each parent that has subcommands
+  const caseBranches = Array.from(subcommands.entries())
+    .map(
+      ([parent, children]) =>
+        `    ${parent})\n      COMPREPLY=( $(compgen -W "${children.join(" ")}" -- "\${cur}") )\n      return 0\n      ;;`,
+    )
+    .join("\n");
+
+  return `#!/usr/bin/env bash
+# todoist CLI bash completion (dynamically generated)
+_todoist_completions() {
+  local cur prev commands
+  COMPREPLY=()
+  cur="\${COMP_WORDS[COMP_CWORD]}"
+  prev="\${COMP_WORDS[COMP_CWORD-1]}"
+
+  commands="${topLevelStr}"
+
+  # Dynamic completion from cache
+  local cache_file="\${HOME}/.config/todoist-cli/.completion-cache.json"
+  local cached_projects=""
+  local cached_labels=""
+  if [ -f "\${cache_file}" ]; then
+    cached_projects=$(cat "\${cache_file}" | grep -o '"projects":\\s*\\[.*\\]' | sed 's/"projects":\\s*\\[//;s/\\]//;s/"//g;s/,/ /g' 2>/dev/null || echo "")
+    cached_labels=$(cat "\${cache_file}" | grep -o '"labels":\\s*\\[.*\\]' | sed 's/"labels":\\s*\\[//;s/\\]//;s/"//g;s/,/ /g' 2>/dev/null || echo "")
+  fi
+
+  # Complete project names for -P/--project flags
+  case "\${prev}" in
+    -P|--project)
+      COMPREPLY=( $(compgen -W "\${cached_projects}" -- "\${cur}") )
+      return 0
+      ;;
+    -l|--label)
+      COMPREPLY=( $(compgen -W "\${cached_labels}" -- "\${cur}") )
+      return 0
+      ;;
+  esac
+
+  case "\${COMP_WORDS[1]}" in
+${caseBranches}
+  esac
+
+  if [ "\${COMP_CWORD}" -eq 1 ]; then
+    COMPREPLY=( $(compgen -W "\${commands}" -- "\${cur}") )
+  fi
+  return 0
+}
+complete -F _todoist_completions todoist`;
+}
+
+function generateDynamicZsh(
+  topLevel: string[],
+  subcommands: Map<string, string[]>,
+): string {
+  // Build the commands array entries (top-level only get simple labels)
+  const commandEntries = topLevel
+    .map((cmd) => `    '${cmd}:${cmd} command'`)
+    .join("\n");
+
+  // Build local variable declarations and case branches for subcommands
+  const subVarDecls: string[] = [];
+  const caseBranches: string[] = [];
+
+  for (const [parent, children] of subcommands) {
+    const varName = `${parent.replace(/-/g, "_")}_sub`;
+    const entries = children.map((c) => `    '${c}:${c}'`).join("\n");
+    subVarDecls.push(`  ${varName}=(\n${entries}\n  )`);
+    caseBranches.push(
+      `      ${parent}) _describe -t ${varName} '${parent} subcommands' ${varName} ;;`,
+    );
+  }
+
+  return `#compdef todoist
+# todoist CLI zsh completion (dynamically generated)
+
+_todoist_projects() {
+  local cache_file="\${HOME}/.config/todoist-cli/.completion-cache.json"
+  if [[ -f "\${cache_file}" ]]; then
+    local projects
+    projects=(\${(f)"$(cat "\${cache_file}" | python3 -c "import sys,json; [print(p) for p in json.load(sys.stdin).get('projects',[])]" 2>/dev/null)"})
+    compadd -a projects
+  fi
+}
+
+_todoist_labels() {
+  local cache_file="\${HOME}/.config/todoist-cli/.completion-cache.json"
+  if [[ -f "\${cache_file}" ]]; then
+    local labels
+    labels=(\${(f)"$(cat "\${cache_file}" | python3 -c "import sys,json; [print(l) for l in json.load(sys.stdin).get('labels',[])]" 2>/dev/null)"})
+    compadd -a labels
+  fi
+}
+
+_todoist() {
+  local -a commands
+
+  commands=(
+${commandEntries}
+  )
+
+${subVarDecls.join("\n\n")}
+
+  # Handle -P/--project and -l/--label flag completions
+  case "\${words[CURRENT-1]}" in
+    -P|--project) _todoist_projects; return ;;
+    -l|--label) _todoist_labels; return ;;
+  esac
+
+  if (( CURRENT == 2 )); then
+    _describe -t commands 'todoist commands' commands
+  elif (( CURRENT == 3 )); then
+    case "\${words[2]}" in
+${caseBranches.join("\n")}
+    esac
+  fi
+}
+
+_todoist "$@"`;
+}
+
+function generateDynamicFish(
+  topLevel: string[],
+  subcommands: Map<string, string[]>,
+): string {
+  const lines: string[] = [
+    "# todoist CLI fish completion (dynamically generated)",
+    "",
+    "# Disable file completions",
+    "complete -c todoist -f",
+    "",
+    "# Dynamic completion helpers",
+    `function __todoist_cached_projects`,
+    `  set -l cache_file "$HOME/.config/todoist-cli/.completion-cache.json"`,
+    `  if test -f "$cache_file"`,
+    `    cat "$cache_file" | python3 -c "import sys,json; [print(p) for p in json.load(sys.stdin).get('projects',[])]" 2>/dev/null`,
+    `  end`,
+    `end`,
+    "",
+    `function __todoist_cached_labels`,
+    `  set -l cache_file "$HOME/.config/todoist-cli/.completion-cache.json"`,
+    `  if test -f "$cache_file"`,
+    `    cat "$cache_file" | python3 -c "import sys,json; [print(l) for l in json.load(sys.stdin).get('labels',[])]" 2>/dev/null`,
+    `  end`,
+    `end`,
+    "",
+    `# Dynamic completions for -P/--project and -l/--label flags`,
+    `complete -c todoist -l project -s P -x -a "(__todoist_cached_projects)" -d "Project name"`,
+    `complete -c todoist -l label -s l -x -a "(__todoist_cached_labels)" -d "Label name"`,
+    "",
+    "# Main commands",
+  ];
+
+  for (const cmd of topLevel) {
+    lines.push(
+      `complete -c todoist -n "__fish_use_subcommand" -a "${cmd}" -d "${cmd} command"`,
+    );
+  }
+
+  // Subcommands
+  for (const [parent, children] of subcommands) {
+    lines.push("");
+    lines.push(`# ${parent} subcommands`);
+    for (const child of children) {
+      lines.push(
+        `complete -c todoist -n "__fish_seen_subcommand_from ${parent}" -a "${child}" -d "${child}"`,
+      );
+    }
+  }
+
+  return lines.join("\n");
+}
+
 export function registerCompletionCommand(program: Command): void {
   program
     .command("completion")

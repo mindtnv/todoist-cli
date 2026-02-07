@@ -1,4 +1,4 @@
-import { api, stripUndefined } from "./client.ts";
+import { api, stripUndefined, type TodoistClient } from "./client.ts";
 
 export interface CrudModule<T, C, U> {
   getAll(params?: Record<string, string>): Promise<T[]>;
@@ -8,22 +8,22 @@ export interface CrudModule<T, C, U> {
   remove(id: string): Promise<void>;
 }
 
-export function createCrudModule<T, C, U>(basePath: string): CrudModule<T, C, U> {
+export function createCrudModule<T, C, U>(basePath: string, client: TodoistClient = api): CrudModule<T, C, U> {
   return {
     getAll(params?: Record<string, string>) {
-      return api.get<T[]>(basePath, params);
+      return client.get<T[]>(basePath, params);
     },
     getOne(id: string) {
-      return api.get<T>(`${basePath}/${id}`);
+      return client.get<T>(`${basePath}/${id}`);
     },
     create(body: C) {
-      return api.post<T>(basePath, stripUndefined(body as unknown as Record<string, unknown>));
+      return client.post<T>(basePath, stripUndefined(body as unknown as Record<string, unknown>));
     },
     update(id: string, body: U) {
-      return api.patch<T>(`${basePath}/${id}`, stripUndefined(body as Record<string, unknown>));
+      return client.patch<T>(`${basePath}/${id}`, stripUndefined(body as Record<string, unknown>));
     },
     remove(id: string) {
-      return api.del(`${basePath}/${id}`);
+      return client.del(`${basePath}/${id}`);
     },
   };
 }

@@ -73,7 +73,7 @@ export class RetryExhaustedError extends Error {
   }
 }
 
-class TodoistClient {
+export class TodoistClient {
   private get authHeaders(): Record<string, string> {
     return { Authorization: `Bearer ${requireToken()}` };
   }

@@ -25,7 +25,7 @@ import type { Task, Priority } from "../api/types.ts";
 import { padEnd, priorityColor, priorityLabel, ID_WIDTH, PRI_WIDTH, getContentWidth, getDueWidth } from "../utils/format.ts";
 import { formatTasksDelimited } from "../utils/output.ts";
 import { parseQuickAdd, resolveProjectName, quickAddResultToParams } from "../utils/quick-add.ts";
-import { getFilters } from "../config/index.ts";
+import { getFilters, getAliases, setAlias, removeAlias } from "../config/index.ts";
 import { cliExit } from "../utils/exit.ts";
 import { batchCreateTasks } from "./commands/task/batch-helpers.ts";
 
@@ -166,6 +166,49 @@ registerLogCommand(program);
 registerStatsCommand(program);
 registerFilterCommand(program);
 registerPluginCommand(program);
+
+// Alias management: todoist alias list|set|remove
+const aliasCmd = program
+  .command("alias")
+  .description("Manage command aliases");
+
+aliasCmd
+  .command("list")
+  .description("Show all configured aliases")
+  .action(() => {
+    const aliases = getAliases();
+    const entries = Object.entries(aliases);
+    if (entries.length === 0) {
+      console.log(chalk.dim("No aliases configured."));
+      return;
+    }
+    for (const [name, command] of entries) {
+      console.log(`  ${chalk.bold(name)} ${chalk.dim("->")} ${command}`);
+    }
+  });
+
+aliasCmd
+  .command("set")
+  .description("Add or update an alias")
+  .argument("<name>", "Alias name")
+  .argument("<command>", "Command the alias expands to (quote if multi-word)")
+  .action((name: string, command: string) => {
+    setAlias(name, command);
+    console.log(chalk.green(`Alias set: ${chalk.bold(name)} -> ${command}`));
+  });
+
+aliasCmd
+  .command("remove")
+  .description("Remove an alias")
+  .argument("<name>", "Alias name to remove")
+  .action((name: string) => {
+    if (removeAlias(name)) {
+      console.log(chalk.green(`Alias removed: ${chalk.bold(name)}`));
+    } else {
+      console.error(chalk.red(`Alias not found: ${name}`));
+      cliExit(1);
+    }
+  });
 
 // Shortcut: todoist today
 program
@@ -533,6 +576,19 @@ async function main() {
       cliExit(2);
     }
   });
+
+  // Alias resolution: expand user-defined aliases before parsing
+  const aliases = getAliases();
+  const firstArg = process.argv[2];
+  if (firstArg && aliases[firstArg]) {
+    const expansion = aliases[firstArg].split(/\s+/);
+    process.argv = [
+      process.argv[0]!,
+      process.argv[1]!,
+      ...expansion,
+      ...process.argv.slice(3),
+    ];
+  }
 
   await program.parseAsync();
 }
