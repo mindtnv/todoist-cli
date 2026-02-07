@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import type { Task, Comment, Project, Label, UpdateTaskParams } from "../../api/types.ts";
 import { getComments, createComment } from "../../api/comments.ts";
-import { closeTask, deleteTask, getTasks, updateTask } from "../../api/tasks.ts";
+import { getTasks } from "../../api/tasks.ts";
 import { openUrl } from "../../utils/open-url.ts";
 import { formatDeadlineLong, isDeadlineOverdue, formatCreatedAt } from "../../utils/date-format.ts";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
@@ -12,6 +12,8 @@ import { ProjectPicker } from "../components/ProjectPicker.tsx";
 import { LabelPicker } from "../components/LabelPicker.tsx";
 import type { DetailSectionDefinition, PluginContext, HookRegistry } from "../../plugins/types.ts";
 import { PRIORITY_LABELS, PRIORITY_COLORS } from "../constants.ts";
+import { MIN_VIEW_HEIGHT } from "../layout.ts";
+import { useDetailOperations } from "../hooks/useDetailOperations.ts";
 
 interface TaskDetailViewProps {
   task: Task;
@@ -35,7 +37,7 @@ export function TaskDetailView({ task, allTasks, projects, labels, onBack, onTas
   const [modal, setModal] = useState<"none" | "comment" | "due" | "deadline" | "move" | "label" | "editFull">("none");
   const [scrollOffset, setScrollOffset] = useState(0);
   const { stdout } = useStdout();
-  const viewportHeight = stdout?.rows ? Math.max(5, stdout.rows - 6) : 30;
+  const viewportHeight = stdout?.rows ? Math.max(MIN_VIEW_HEIGHT, stdout.rows - 6) : 30;
 
   useEffect(() => {
     let cancelled = false;
@@ -80,28 +82,47 @@ export function TaskDetailView({ task, allTasks, projects, labels, onBack, onTas
     };
   }, [task.id, allTasks]);
 
-  const handleComplete = useCallback(async () => {
-    try {
-      setStatusMessage("Completing task...");
-      await closeTask(task.id);
-      try { await pluginHooks?.emit("task.completed", { task }); } catch { /* hook error is non-critical */ }
-      onTaskChanged("Task completed!");
-    } catch {
-      setStatusMessage("Failed to complete task");
-    }
-  }, [task, onTaskChanged, pluginHooks]);
+  const {
+    handleSetPriority,
+    handleSetDueDate: handleSetDueDateBase,
+    handleSetDeadline: handleSetDeadlineBase,
+    handleMoveToProject: handleMoveToProjectBase,
+    handleLabelsSave: handleLabelsSaveBase,
+    handleComplete,
+    handleDeleteConfirm: handleDeleteConfirmBase,
+    handleEditFull: handleEditFullBase,
+  } = useDetailOperations(task, projects, onTaskChanged, setStatusMessage, pluginHooks);
 
+  // Wrap handlers that need to dismiss modal or confirmAction before delegating
   const handleDeleteConfirm = useCallback(async () => {
     setConfirmAction("none");
-    try {
-      setStatusMessage("Deleting task...");
-      await deleteTask(task.id);
-      try { await pluginHooks?.emit("task.deleted", { task }); } catch { /* hook error is non-critical */ }
-      onTaskChanged("Task deleted!");
-    } catch {
-      setStatusMessage("Failed to delete task");
-    }
-  }, [task, onTaskChanged, pluginHooks]);
+    await handleDeleteConfirmBase();
+  }, [handleDeleteConfirmBase]);
+
+  const handleSetDueDate = useCallback(async (dueString: string) => {
+    setModal("none");
+    await handleSetDueDateBase(dueString);
+  }, [handleSetDueDateBase]);
+
+  const handleSetDeadline = useCallback(async (value: string) => {
+    setModal("none");
+    await handleSetDeadlineBase(value);
+  }, [handleSetDeadlineBase]);
+
+  const handleMoveToProject = useCallback(async (projectId: string) => {
+    setModal("none");
+    await handleMoveToProjectBase(projectId);
+  }, [handleMoveToProjectBase]);
+
+  const handleLabelsSave = useCallback(async (newLabels: string[]) => {
+    setModal("none");
+    await handleLabelsSaveBase(newLabels);
+  }, [handleLabelsSaveBase]);
+
+  const handleEditFull = useCallback(async (params: UpdateTaskParams & { project_id?: string }) => {
+    setModal("none");
+    await handleEditFullBase(params);
+  }, [handleEditFullBase]);
 
   const handleAddComment = useCallback(
     async (content: string) => {
@@ -127,89 +148,6 @@ export function TaskDetailView({ task, allTasks, projects, labels, onBack, onTas
       setStatusMessage("Failed to open in browser");
     }
   }, [task.url]);
-
-  const handleSetPriority = useCallback(async (priority: 1 | 2 | 3 | 4) => {
-    try {
-      setStatusMessage("Setting priority...");
-      try { await pluginHooks?.emit("task.updating", { task, changes: { priority } }); } catch { /* hook error is non-critical */ }
-      await updateTask(task.id, { priority });
-      try { await pluginHooks?.emit("task.updated", { task: { ...task, priority }, changes: { priority } }); } catch { /* hook error is non-critical */ }
-      onTaskChanged(`Priority set to p${priority}`);
-    } catch {
-      setStatusMessage("Failed to set priority");
-    }
-  }, [task, onTaskChanged, pluginHooks]);
-
-  const handleSetDueDate = useCallback(async (dueString: string) => {
-    setModal("none");
-    try {
-      const isRemove = dueString.toLowerCase() === "none" || dueString.toLowerCase() === "clear";
-      const changes: UpdateTaskParams = { due_string: isRemove ? "no date" : dueString };
-      try { await pluginHooks?.emit("task.updating", { task, changes }); } catch { /* hook error is non-critical */ }
-      await updateTask(task.id, changes);
-      try { await pluginHooks?.emit("task.updated", { task, changes }); } catch { /* hook error is non-critical */ }
-      onTaskChanged(isRemove ? "Due date removed" : `Due set to "${dueString}"`);
-    } catch {
-      setStatusMessage("Failed to set due date");
-    }
-  }, [task, onTaskChanged, pluginHooks]);
-
-  const handleSetDeadline = useCallback(async (value: string) => {
-    setModal("none");
-    const isRemove = value.toLowerCase() === "none" || value.toLowerCase() === "clear" || value === "";
-    if (!isRemove && !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-      setStatusMessage("Invalid date format. Use YYYY-MM-DD.");
-      return;
-    }
-    try {
-      const changes: UpdateTaskParams = { deadline_date: isRemove ? null : value };
-      try { await pluginHooks?.emit("task.updating", { task, changes }); } catch { /* hook error is non-critical */ }
-      await updateTask(task.id, changes);
-      try { await pluginHooks?.emit("task.updated", { task, changes }); } catch { /* hook error is non-critical */ }
-      onTaskChanged(isRemove ? "Deadline removed" : `Deadline set to ${value}`);
-    } catch {
-      setStatusMessage("Failed to set deadline");
-    }
-  }, [task, onTaskChanged, pluginHooks]);
-
-  const handleMoveToProject = useCallback(async (projectId: string) => {
-    setModal("none");
-    try {
-      const projectName = projects.find((p) => p.id === projectId)?.name ?? "project";
-      const changes: UpdateTaskParams = { project_id: projectId };
-      try { await pluginHooks?.emit("task.updating", { task, changes }); } catch { /* hook error is non-critical */ }
-      await updateTask(task.id, changes);
-      try { await pluginHooks?.emit("task.updated", { task: { ...task, project_id: projectId }, changes }); } catch { /* hook error is non-critical */ }
-      onTaskChanged(`Moved to ${projectName}`);
-    } catch {
-      setStatusMessage("Failed to move task");
-    }
-  }, [task, projects, onTaskChanged, pluginHooks]);
-
-  const handleLabelsSave = useCallback(async (newLabels: string[]) => {
-    setModal("none");
-    try {
-      const changes: UpdateTaskParams = { labels: newLabels };
-      try { await pluginHooks?.emit("task.updating", { task, changes }); } catch { /* hook error is non-critical */ }
-      await updateTask(task.id, changes);
-      try { await pluginHooks?.emit("task.updated", { task: { ...task, labels: newLabels }, changes }); } catch { /* hook error is non-critical */ }
-      onTaskChanged("Labels updated");
-    } catch {
-      setStatusMessage("Failed to update labels");
-    }
-  }, [task, onTaskChanged, pluginHooks]);
-
-  const handleEditFull = useCallback(async (params: UpdateTaskParams & { project_id?: string }) => {
-    setModal("none");
-    try {
-      try { await pluginHooks?.emit("task.updating", { task, changes: params }); } catch { /* hook error is non-critical */ }
-      await updateTask(task.id, params);
-      try { await pluginHooks?.emit("task.updated", { task, changes: params }); } catch { /* hook error is non-critical */ }
-      onTaskChanged("Task updated");
-    } catch {
-      setStatusMessage("Failed to update task");
-    }
-  }, [task, onTaskChanged, pluginHooks]);
 
   useInput((input, key) => {
     if (confirmAction !== "none") return;

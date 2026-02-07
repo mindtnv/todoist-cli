@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo } from "react";
 import { Box, Text, useInput } from "ink";
 import type { Task, Project, Label, Priority, UpdateTaskParams, CreateTaskParams } from "../../api/types.ts";
 import { PRIORITY_LABELS, PRIORITY_COLORS } from "../constants.ts";
+import { useFormField } from "../hooks/useFormField.ts";
 
 interface EditTaskModalProps {
   task?: Task;
@@ -23,55 +24,6 @@ const PRIORITY_DOTS: Record<number, string> = {
 
 const VIEW_SIZE = 8;
 
-interface CursorState {
-  content: number;
-  description: number;
-  due: number;
-  deadline: number;
-}
-
-interface FormState {
-  content: string;
-  description: string;
-  due: string;
-  deadline: string;
-  priority: Priority;
-  labels: Set<string>;
-  projectId: string;
-}
-
-/** Handle text input for a field: backspace, arrows, character insertion. Returns true if the input was handled. */
-function handleTextInput(
-  input: string,
-  key: { backspace?: boolean; delete?: boolean; leftArrow?: boolean; rightArrow?: boolean; ctrl?: boolean; meta?: boolean },
-  value: string,
-  cursor: number,
-  setValue: (updater: (v: string) => string) => void,
-  setCursor: (updater: (c: number) => number) => void,
-): boolean {
-  if (key.backspace || key.delete) {
-    if (cursor > 0) {
-      setValue((v) => v.slice(0, cursor - 1) + v.slice(cursor));
-      setCursor((c) => c - 1);
-    }
-    return true;
-  }
-  if (key.leftArrow) {
-    setCursor((c) => Math.max(0, c - 1));
-    return true;
-  }
-  if (key.rightArrow) {
-    setCursor((c) => Math.min(value.length, c + 1));
-    return true;
-  }
-  if (input && !key.ctrl && !key.meta) {
-    setValue((v) => v.slice(0, cursor) + input + v.slice(cursor));
-    setCursor((c) => c + input.length);
-    return true;
-  }
-  return false;
-}
-
 export function EditTaskModal({ task, projects, labels, onSave, onCreate, onCancel, defaultProjectId, defaultDue }: EditTaskModalProps) {
   const isCreateMode = !task;
 
@@ -80,22 +32,16 @@ export function EditTaskModal({ task, projects, labels, onSave, onCreate, onCanc
 
   const [activeField, setActiveField] = useState(0);
 
-  const [form, setForm] = useState<FormState>({
-    content: task?.content ?? "",
-    description: task?.description ?? "",
-    due: initialDue,
-    deadline: task?.deadline?.date ?? "",
-    priority: task?.priority ?? 1,
-    labels: new Set(task?.labels ?? []),
-    projectId: initialProjectId,
-  });
+  // Text fields using useFormField hook
+  const content = useFormField(task?.content ?? "");
+  const description = useFormField(task?.description ?? "");
+  const due = useFormField(initialDue);
+  const deadline = useFormField(task?.deadline?.date ?? "");
 
-  const [cursors, setCursors] = useState<CursorState>({
-    content: (task?.content ?? "").length,
-    description: (task?.description ?? "").length,
-    due: initialDue.length,
-    deadline: (task?.deadline?.date ?? "").length,
-  });
+  // Non-text form state
+  const [priority, setPriority] = useState<Priority>(task?.priority ?? 1);
+  const [formLabels, setFormLabels] = useState<Set<string>>(new Set(task?.labels ?? []));
+  const [projectId, setProjectId] = useState(initialProjectId);
 
   const [labelIndex, setLabelIndex] = useState(0);
   const [labelScrollOffset, setLabelScrollOffset] = useState(0);
@@ -105,10 +51,6 @@ export function EditTaskModal({ task, projects, labels, onSave, onCreate, onCanc
   const [projectScrollOffset, setProjectScrollOffset] = useState(0);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
 
-  const setFormField = useCallback(<K extends keyof FormState>(field: K, value: FormState[K]) => {
-    setForm((prev) => ({ ...prev, [field]: value }));
-  }, []);
-
   const isDirty = useMemo(() => {
     const initContent = task?.content ?? "";
     const initDesc = task?.description ?? "";
@@ -117,62 +59,62 @@ export function EditTaskModal({ task, projects, labels, onSave, onCreate, onCanc
     const initDeadline = task?.deadline?.date ?? "";
     const initLabels = new Set(task?.labels ?? []);
     const initProject = initialProjectId;
-    if (form.content !== initContent) return true;
-    if (form.description !== initDesc) return true;
-    if (form.priority !== initPriority) return true;
-    if (form.due !== initDue) return true;
-    if (form.deadline !== initDeadline) return true;
-    if (form.projectId !== initProject) return true;
-    if (form.labels.size !== initLabels.size) return true;
-    for (const l of form.labels) {
+    if (content.value !== initContent) return true;
+    if (description.value !== initDesc) return true;
+    if (priority !== initPriority) return true;
+    if (due.value !== initDue) return true;
+    if (deadline.value !== initDeadline) return true;
+    if (projectId !== initProject) return true;
+    if (formLabels.size !== initLabels.size) return true;
+    for (const l of formLabels) {
       if (!initLabels.has(l)) return true;
     }
     return false;
-  }, [form, task, defaultDue, initialProjectId]);
+  }, [content.value, description.value, priority, due.value, deadline.value, projectId, formLabels, task, defaultDue, initialProjectId]);
 
   const handleSave = useCallback(() => {
     if (isCreateMode && onCreate) {
-      const params: CreateTaskParams = { content: form.content };
-      if (form.description) params.description = form.description;
-      if (form.priority !== 1) params.priority = form.priority;
-      if (form.due) params.due_string = form.due;
-      if (form.deadline) params.deadline_date = form.deadline;
-      const labelsList = Array.from(form.labels);
+      const params: CreateTaskParams = { content: content.value };
+      if (description.value) params.description = description.value;
+      if (priority !== 1) params.priority = priority;
+      if (due.value) params.due_string = due.value;
+      if (deadline.value) params.deadline_date = deadline.value;
+      const labelsList = Array.from(formLabels);
       if (labelsList.length > 0) params.labels = labelsList;
-      if (form.projectId) params.project_id = form.projectId;
+      if (projectId) params.project_id = projectId;
       onCreate(params);
       return;
     }
 
     if (!task) return;
     const params: UpdateTaskParams & { project_id?: string } = {};
-    if (form.content !== task.content) params.content = form.content;
-    if (form.description !== task.description) params.description = form.description;
-    if (form.priority !== task.priority) params.priority = form.priority;
-    if (form.due !== (task.due?.string ?? "")) {
-      if (form.due === "" || form.due.toLowerCase() === "none" || form.due.toLowerCase() === "clear") {
+    if (content.value !== task.content) params.content = content.value;
+    if (description.value !== task.description) params.description = description.value;
+    if (priority !== task.priority) params.priority = priority;
+    if (due.value !== (task.due?.string ?? "")) {
+      if (due.value === "" || due.value.toLowerCase() === "none" || due.value.toLowerCase() === "clear") {
         params.due_string = "no date";
       } else {
-        params.due_string = form.due;
+        params.due_string = due.value;
       }
     }
     const oldDeadline = task.deadline?.date ?? "";
-    if (form.deadline !== oldDeadline) {
-      if (form.deadline === "" || form.deadline.toLowerCase() === "none" || form.deadline.toLowerCase() === "clear") {
+    if (deadline.value !== oldDeadline) {
+      if (deadline.value === "" || deadline.value.toLowerCase() === "none" || deadline.value.toLowerCase() === "clear") {
         params.deadline_date = null;
       } else {
-        params.deadline_date = form.deadline;
+        params.deadline_date = deadline.value;
       }
     }
-    const newLabels = Array.from(form.labels);
+    const newLabels = Array.from(formLabels);
     const oldLabels = [...task.labels].sort();
     const sortedNew = [...newLabels].sort();
     if (JSON.stringify(oldLabels) !== JSON.stringify(sortedNew)) {
       params.labels = newLabels;
     }
-    if (form.projectId !== task.project_id) params.project_id = form.projectId;
+    if (projectId !== task.project_id) params.project_id = projectId;
     onSave(params);
-  }, [form, task, onSave, onCreate, isCreateMode]);
+  }, [content.value, description.value, priority, due.value, deadline.value, formLabels, projectId, task, onSave, onCreate, isCreateMode]);
 
   const currentField = FIELDS[activeField];
 
@@ -197,13 +139,21 @@ export function EditTaskModal({ task, projects, labels, onSave, onCreate, onCanc
 
   const scrollProjectTo = useCallback((newIndex: number) => {
     setProjectIndex(newIndex);
-    setFormField("projectId", projects[newIndex]?.id ?? form.projectId);
+    setProjectId(projects[newIndex]?.id ?? projectId);
     if (newIndex < projectScrollOffset) {
       setProjectScrollOffset(newIndex);
     } else if (newIndex >= projectScrollOffset + VIEW_SIZE) {
       setProjectScrollOffset(newIndex - VIEW_SIZE + 1);
     }
-  }, [projectScrollOffset, projects, form.projectId, setFormField]);
+  }, [projectScrollOffset, projects, projectId]);
+
+  // Map field names to their useFormField instances
+  const textFields: Record<string, ReturnType<typeof useFormField>> = {
+    content,
+    description,
+    due,
+    deadline,
+  };
 
   useInput((input, key) => {
     // Handle discard confirmation
@@ -243,55 +193,23 @@ export function EditTaskModal({ task, projects, labels, onSave, onCreate, onCanc
     }
 
     // Field-specific input handling
-    if (currentField === "content") {
+    const activeTextField = currentField ? textFields[currentField] : undefined;
+    if (activeTextField) {
+      // Text fields: content, description, due, deadline
       if (key.return) {
         setActiveField((i) => Math.min(FIELDS.length - 1, i + 1));
         return;
       }
-      handleTextInput(
-        input, key, form.content, cursors.content,
-        (updater) => setForm((f) => ({ ...f, content: updater(f.content) })),
-        (updater) => setCursors((c) => ({ ...c, content: updater(c.content) })),
-      );
-    } else if (currentField === "description") {
-      if (key.return) {
-        setActiveField((i) => Math.min(FIELDS.length - 1, i + 1));
-        return;
-      }
-      handleTextInput(
-        input, key, form.description, cursors.description,
-        (updater) => setForm((f) => ({ ...f, description: updater(f.description) })),
-        (updater) => setCursors((c) => ({ ...c, description: updater(c.description) })),
-      );
+      activeTextField.handleInput(input, key);
     } else if (currentField === "priority") {
       if (input === "1" || input === "2" || input === "3" || input === "4") {
-        setFormField("priority", Number(input) as Priority);
+        setPriority(Number(input) as Priority);
         return;
       }
       if (key.return) {
         setActiveField((i) => Math.min(FIELDS.length - 1, i + 1));
         return;
       }
-    } else if (currentField === "due") {
-      if (key.return) {
-        setActiveField((i) => Math.min(FIELDS.length - 1, i + 1));
-        return;
-      }
-      handleTextInput(
-        input, key, form.due, cursors.due,
-        (updater) => setForm((f) => ({ ...f, due: updater(f.due) })),
-        (updater) => setCursors((c) => ({ ...c, due: updater(c.due) })),
-      );
-    } else if (currentField === "deadline") {
-      if (key.return) {
-        setActiveField((i) => Math.min(FIELDS.length - 1, i + 1));
-        return;
-      }
-      handleTextInput(
-        input, key, form.deadline, cursors.deadline,
-        (updater) => setForm((f) => ({ ...f, deadline: updater(f.deadline) })),
-        (updater) => setCursors((c) => ({ ...c, deadline: updater(c.deadline) })),
-      );
     } else if (currentField === "labels") {
       if (key.return) {
         setActiveField((i) => Math.min(FIELDS.length - 1, i + 1));
@@ -308,14 +226,14 @@ export function EditTaskModal({ task, projects, labels, onSave, onCreate, onCanc
       if (input === " ") {
         const label = labels[labelIndex];
         if (label) {
-          setForm((prev) => {
-            const next = new Set(prev.labels);
+          setFormLabels((prev) => {
+            const next = new Set(prev);
             if (next.has(label.name)) {
               next.delete(label.name);
             } else {
               next.add(label.name);
             }
-            return { ...prev, labels: next };
+            return next;
           });
         }
         return;
@@ -370,8 +288,8 @@ export function EditTaskModal({ task, projects, labels, onSave, onCreate, onCanc
         <Text bold color="cyan">{isCreateMode ? "New Task" : "Edit Task"}</Text>
       </Box>
 
-      {renderTextField("Content", form.content, cursors.content, currentField === "content")}
-      {renderTextField("Description", form.description, cursors.description, currentField === "description")}
+      {renderTextField("Content", content.value, content.cursor, currentField === "content")}
+      {renderTextField("Description", description.value, description.cursor, currentField === "description")}
 
       {/* Priority */}
       <Box>
@@ -382,7 +300,7 @@ export function EditTaskModal({ task, projects, labels, onSave, onCreate, onCanc
           const dot = PRIORITY_DOTS[p] ?? "\u25CB";
           const color = PRIORITY_COLORS[p] ?? "gray";
           const label = PRIORITY_LABELS[p] ?? `p${p}`;
-          const isActive = form.priority === p;
+          const isActive = priority === p;
           return (
             <Box key={p} marginRight={1}>
               <Text
@@ -396,8 +314,8 @@ export function EditTaskModal({ task, projects, labels, onSave, onCreate, onCanc
         })}
       </Box>
 
-      {renderTextField("Due", form.due, cursors.due, currentField === "due")}
-      {renderTextField("Deadline", form.deadline, cursors.deadline, currentField === "deadline")}
+      {renderTextField("Due", due.value, due.cursor, currentField === "due")}
+      {renderTextField("Deadline", deadline.value, deadline.cursor, currentField === "deadline")}
 
       {/* Labels */}
       <Box flexDirection="column">
@@ -406,8 +324,8 @@ export function EditTaskModal({ task, projects, labels, onSave, onCreate, onCanc
             <Text color={currentField === "labels" ? "yellow" : "gray"}>Labels:</Text>
           </Box>
           <Text color="magenta">
-            {form.labels.size > 0
-              ? Array.from(form.labels).map((l) => `@${l}`).join(" ")
+            {formLabels.size > 0
+              ? Array.from(formLabels).map((l) => `@${l}`).join(" ")
               : "(none)"}
           </Text>
         </Box>
@@ -424,7 +342,7 @@ export function EditTaskModal({ task, projects, labels, onSave, onCreate, onCanc
                     backgroundColor={actualIndex === labelIndex ? "blue" : undefined}
                     color={actualIndex === labelIndex ? "white" : undefined}
                   >
-                    {form.labels.has(label.name) ? "[x] " : "[ ] "}
+                    {formLabels.has(label.name) ? "[x] " : "[ ] "}
                     <Text color={actualIndex === labelIndex ? "white" : "magenta"}>@{label.name}</Text>
                   </Text>
                 </Box>
@@ -444,7 +362,7 @@ export function EditTaskModal({ task, projects, labels, onSave, onCreate, onCanc
             <Text color={currentField === "project" ? "yellow" : "gray"}>Project:</Text>
           </Box>
           <Text color="cyan">
-            {projects.find((p) => p.id === form.projectId)?.name ?? "Unknown"}
+            {projects.find((p) => p.id === projectId)?.name ?? "Unknown"}
           </Text>
         </Box>
         {currentField === "project" && (

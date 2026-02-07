@@ -10,6 +10,6 @@ interface CompletedResponse {
 export async function getCompletedTasks(since?: string): Promise<CompletedTask[]> {
   const params: Record<string, string> = {};
   if (since) params.since = since;
-  const data = await api.get<CompletedResponse>("/tasks/completed", params);
+  const data = await api.getRaw<CompletedResponse>("/tasks/completed", params);
   return data.items ?? [];
 }

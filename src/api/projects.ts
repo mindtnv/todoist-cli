@@ -1,22 +1,10 @@
-import { api, stripUndefined } from "./client.ts";
+import { createCrudModule } from "./crud.ts";
 import type { Project, CreateProjectParams, UpdateProjectParams } from "./types.ts";
 
-export async function getProjects(): Promise<Project[]> {
-  return api.get<Project[]>("/projects");
-}
+const crud = createCrudModule<Project, CreateProjectParams, UpdateProjectParams>("/projects");
 
-export async function getProject(id: string): Promise<Project> {
-  return api.get<Project>(`/projects/${id}`);
-}
-
-export async function createProject(params: CreateProjectParams): Promise<Project> {
-  return api.post<Project>("/projects", stripUndefined(params as unknown as Record<string, unknown>));
-}
-
-export async function updateProject(id: string, params: UpdateProjectParams): Promise<Project> {
-  return api.patch<Project>(`/projects/${id}`, stripUndefined(params as Record<string, unknown>));
-}
-
-export async function deleteProject(id: string): Promise<void> {
-  await api.del(`/projects/${id}`);
-}
+export const getProjects = crud.getAll;
+export const getProject = crud.getOne;
+export const createProject = crud.create;
+export const updateProject = crud.update;
+export const deleteProject = crud.remove;

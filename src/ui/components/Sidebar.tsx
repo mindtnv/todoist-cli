@@ -3,7 +3,9 @@ import { Box, Text, useInput, useStdout } from "ink";
 import type { Project, Label, Section } from "../../api/types.ts";
 import { getSections } from "../../api/sections.ts";
 import { mapTodoistColor } from "../../utils/colors.ts";
+import { getLocalDateString } from "../../utils/date-format.ts";
 import type { PluginViewDefinition } from "../../plugins/types.ts";
+import { SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, MIN_VIEW_HEIGHT, DEFAULT_TERMINAL_ROWS } from "../layout.ts";
 
 const SIDEBAR_ICONS: Record<string, string> = {
   inbox: "\u25A3",
@@ -55,8 +57,7 @@ export function buildSidebarItems(
   }
 
   const inboxProject = projects.find((p) => p.is_inbox_project);
-  const today = new Date();
-  const localDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  const localDate = getLocalDateString();
   const todayCount = tasks ? tasks.filter((t) => t.due?.date === localDate).length : undefined;
   const upcomingCount = tasks ? tasks.filter((t) => t.due !== null && t.due.date >= localDate).length : undefined;
 
@@ -146,7 +147,7 @@ export function Sidebar({
   const [sections, setSections] = useState<Section[]>([]);
   const { stdout } = useStdout();
   // Reserve lines for title, border, padding (~5 lines overhead)
-  const sidebarViewHeight = Math.max(5, (stdout?.rows ?? 24) - 5);
+  const sidebarViewHeight = Math.max(MIN_VIEW_HEIGHT, (stdout?.rows ?? DEFAULT_TERMINAL_ROWS) - 5);
 
   useEffect(() => {
     if (!activeProjectId) {
@@ -190,7 +191,7 @@ export function Sidebar({
         const countStr = item.taskCount != null ? ` (${item.taskCount})`.length : 0;
         return item.label.length + countStr + 4; // 4 for prefix "> " and padding
       });
-    return Math.min(38, Math.max(24, Math.max(...lengths, 24)));
+    return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.max(...lengths, SIDEBAR_MIN_WIDTH)));
   }, [items]);
 
   const scrolledItems = useMemo(() => {

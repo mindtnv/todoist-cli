@@ -3,6 +3,8 @@ import { Box, Text, useInput, useStdout } from "ink";
 import type { Task } from "../../api/types.ts";
 import type { TaskColumnDefinition, PluginContext } from "../../plugins/types.ts";
 import { TaskRow } from "./TaskRow.tsx";
+import { MIN_VIEW_HEIGHT, DEFAULT_TERMINAL_COLS } from "../layout.ts";
+import { getLocalDateString } from "../../utils/date-format.ts";
 
 interface TaskListProps {
   tasks: Task[];
@@ -80,7 +82,7 @@ export function TaskList({
 }: TaskListProps) {
   const { stdout } = useStdout();
   // Reserve lines for header, border, status bar, etc. (~8 lines overhead)
-  const dynamicHeight = stdout?.rows ? Math.max(5, stdout.rows - 8) : 20;
+  const dynamicHeight = stdout?.rows ? Math.max(MIN_VIEW_HEIGHT, stdout.rows - 8) : 20;
   const viewHeight = viewHeightProp ?? dynamicHeight;
   const flatTasks = useMemo(() => buildTree(tasks), [tasks]);
 
@@ -187,10 +189,10 @@ export function TaskList({
       {sortField === "due" ? (
         (() => {
           const today = new Date();
-          const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+          const todayStr = getLocalDateString(today);
           const tomorrow = new Date(today);
           tomorrow.setDate(tomorrow.getDate() + 1);
-          const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
+          const tomorrowStr = getLocalDateString(tomorrow);
           let lastGroup = "";
           // Track what group the task before the visible window was in
           for (let k = 0; k < scrollStart; k++) {
@@ -225,7 +227,7 @@ export function TaskList({
                   isMarked={selectedIds?.has(item.task.id)}
                   depth={item.depth}
                   searchQuery={searchQuery}
-                  termWidth={stdout?.columns ?? 80}
+                  termWidth={stdout?.columns ?? DEFAULT_TERMINAL_COLS}
                   pluginColumns={pluginColumns}
                   pluginColumnContextMap={pluginColumnContextMap}
                 />
@@ -242,7 +244,7 @@ export function TaskList({
             isMarked={selectedIds?.has(item.task.id)}
             depth={item.depth}
             searchQuery={searchQuery}
-            termWidth={stdout?.columns ?? 80}
+            termWidth={stdout?.columns ?? DEFAULT_TERMINAL_COLS}
             pluginColumns={pluginColumns}
             pluginColumnContextMap={pluginColumnContextMap}
           />

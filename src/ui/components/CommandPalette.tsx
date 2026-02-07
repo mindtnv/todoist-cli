@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { Box, Text, useInput } from "ink";
+import { DEFAULT_TERMINAL_COLS } from "../layout.ts";
 
 export interface Command {
   name: string;
@@ -187,7 +188,7 @@ export function CommandPalette({ commands, onCancel }: CommandPaletteProps) {
     return elements;
   };
 
-  const termWidth = process.stdout.columns ?? 80;
+  const termWidth = process.stdout.columns ?? DEFAULT_TERMINAL_COLS;
   const paletteWidth = Math.min(60, Math.max(40, Math.floor(termWidth * 0.5)));
 
   const hasMore = ordered.length > scrollOffset + maxVisible;

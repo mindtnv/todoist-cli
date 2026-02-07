@@ -44,6 +44,17 @@ function isTimeoutError(err: unknown): boolean {
   return false;
 }
 
+export class RetryExhaustedError extends Error {
+  constructor(
+    public readonly url: string,
+    public readonly attempts: number,
+    public readonly lastError: Error,
+  ) {
+    super(`Request to ${url} failed after ${attempts} attempts: ${lastError.message}`);
+    this.name = "RetryExhaustedError";
+  }
+}
+
 class TodoistClient {
   private get authHeaders(): Record<string, string> {
     return { Authorization: `Bearer ${requireToken()}` };
@@ -78,6 +89,12 @@ class TodoistClient {
       return allResults as T;
     }
     return data as T;
+  }
+
+  async getRaw<T>(path: string, params?: Record<string, string>): Promise<T> {
+    const url = this.buildUrl(path, params);
+    const res = await this.fetchWithRetry(url, { headers: this.authHeaders });
+    return this.handleResponse<T>(res);
   }
 
   private buildUrl(path: string, params?: Record<string, string>): string {
@@ -214,7 +231,7 @@ class TodoistClient {
     }
 
     // All retries exhausted
-    throw lastError ?? new Error("Request failed after all retries.");
+    throw new RetryExhaustedError(url, maxRetries + 1, lastError ?? new Error("Unknown failure"));
   }
 
   private async handleResponse<T>(res: Response): Promise<T> {

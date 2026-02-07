@@ -3,6 +3,7 @@ import { Box, Text } from "ink";
 import type { Task } from "../../api/types.ts";
 import type { TaskColumnDefinition, PluginContext } from "../../plugins/types.ts";
 import { formatRelativeDue, formatDeadlineShort, isDeadlineUrgent } from "../../utils/date-format.ts";
+import { computeSidebarWidth } from "../layout.ts";
 
 interface TaskRowProps {
   task: Task;
@@ -64,8 +65,8 @@ function TaskRowInner({ task, isSelected, isMarked = false, depth = 0, searchQue
   const deadlineWidth = deadlineText ? deadlineText.length + 3 : 0; // " F date"
   const labelWidth = labelText ? labelText.length + 1 : 0;
   const commentWidth = commentText ? commentText.length + 1 : 0;
-  // Sidebar width is dynamic (24-38), estimate from terminal width
-  const sidebarWidth = Math.min(38, Math.max(24, Math.floor(termWidth * 0.25)));
+  // Sidebar width is dynamic, estimate from terminal width
+  const sidebarWidth = computeSidebarWidth(termWidth);
   const borderPadding = 4; // task list borders/padding
   const pluginColumnsWidth = pluginColumns?.reduce((w, c) => w + (c.width ?? 8) + 1, 0) ?? 0;
   const overhead = sidebarWidth + borderPadding + markerWidth + indentWidth + checkboxPrioWidth + dueWidth + recurringWidth + deadlineWidth + labelWidth + commentWidth + pluginColumnsWidth + 1;

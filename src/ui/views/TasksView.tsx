@@ -1,5 +1,5 @@
 import React from "react";
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { Box, Text } from "ink";
 import type { Task, Project, Label, Section } from "../../api/types.ts";
 import { Sidebar } from "../components/Sidebar.tsx";
@@ -16,6 +16,8 @@ import { Breadcrumb } from "../components/Breadcrumb.tsx";
 import { PRIORITY_COLORS, PRIORITY_NAMES } from "../constants.ts";
 import { ModalManager } from "../components/ModalManager.tsx";
 import type { Modal } from "../components/ModalManager.tsx";
+import { TasksViewProvider } from "../contexts/TasksViewContext.tsx";
+import type { TasksViewContextValue } from "../contexts/TasksViewContext.tsx";
 import type { ExtensionRegistry, PaletteRegistry, ViewRegistry, PluginContext, HookRegistry } from "../../plugins/types.ts";
 import { StatusBar } from "../components/StatusBar.tsx";
 import { useStatusMessage } from "../hooks/useStatusMessage.ts";
@@ -337,165 +339,185 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
   const isSearching = modal === "search" || searchQuery !== "";
   const isRangeSelecting = rangeSelectAnchor !== null;
 
+  // Build context value for ModalManager (and future consumers)
+  const tasksViewContextValue = useMemo<TasksViewContextValue>(() => ({
+    modal,
+    setModal,
+    selectedTask,
+    selectedIds,
+    projects,
+    labels,
+    searchQuery,
+    setSearchQuery,
+    sortField,
+    sortDirection,
+    filterProjectId,
+    filterView,
+    handlers: {
+      handleAddTask,
+      handleCreateTaskFull,
+      handleAddSubtask,
+      handleEditTask,
+      handleRenameTask,
+      handleEditTaskFull,
+      handleDeleteConfirm,
+      handleBulkDeleteConfirm,
+      handleSetDueDate,
+      handleSetDeadline,
+      handleMoveToProject,
+      handleLabelsSave,
+      handleFilterInput,
+      handleSortSelect,
+      handleSearchSubmit,
+      handleSearchCancel,
+      handleCreateProject,
+      handleCreateLabel,
+      renderQuickAddPreview,
+      handlePluginInput,
+    },
+    commands,
+    pluginExtensions,
+    pendingPluginInput,
+  }), [
+    modal, setModal, selectedTask, selectedIds, projects, labels,
+    searchQuery, setSearchQuery, sortField, sortDirection,
+    filterProjectId, filterView,
+    handleAddTask, handleCreateTaskFull, handleAddSubtask,
+    handleEditTask, handleRenameTask, handleEditTaskFull,
+    handleDeleteConfirm, handleBulkDeleteConfirm,
+    handleSetDueDate, handleSetDeadline, handleMoveToProject,
+    handleLabelsSave, handleFilterInput, handleSortSelect,
+    handleSearchSubmit, handleSearchCancel,
+    handleCreateProject, handleCreateLabel,
+    renderQuickAddPreview, handlePluginInput,
+    commands, pluginExtensions, pendingPluginInput,
+  ]);
+
   return (
-    <Box flexDirection="column" width="100%" height="100%">
-      <Box flexDirection="row" flexGrow={1}>
-        <Sidebar
-          projects={projects}
-          labels={labels}
-          tasks={tasks}
-          activeProjectId={filterProjectId}
-          selectedIndex={sidebarIndex}
-          isFocused={activePanel === "sidebar" && modal === "none"}
-          onSelect={handleSidebarSelect}
-          onIndexChange={setSidebarIndex}
-          onNavigate={onNavigate ? (viewName: string) => {
-            onNavigate(viewName);
-          } : undefined}
-          pluginViews={pluginViews?.getViews()}
-        />
-        <Box flexDirection="column" flexGrow={1}>
-          <Box paddingX={1} justifyContent="space-between">
-            <Box>
-              <Breadcrumb segments={breadcrumbSegments} />
-              <Text color="gray">{` | Sort: ${sortLabels[sortField]} ${sortDirection === "asc" ? "\u2191" : "\u2193"}`}</Text>
+    <TasksViewProvider value={tasksViewContextValue}>
+      <Box flexDirection="column" width="100%" height="100%">
+        <Box flexDirection="row" flexGrow={1}>
+          <Sidebar
+            projects={projects}
+            labels={labels}
+            tasks={tasks}
+            activeProjectId={filterProjectId}
+            selectedIndex={sidebarIndex}
+            isFocused={activePanel === "sidebar" && modal === "none"}
+            onSelect={handleSidebarSelect}
+            onIndexChange={setSidebarIndex}
+            onNavigate={onNavigate ? (viewName: string) => {
+              onNavigate(viewName);
+            } : undefined}
+            pluginViews={pluginViews?.getViews()}
+          />
+          <Box flexDirection="column" flexGrow={1}>
+            <Box paddingX={1} justifyContent="space-between">
+              <Box>
+                <Breadcrumb segments={breadcrumbSegments} />
+                <Text color="gray">{` | Sort: ${sortLabels[sortField]} ${sortDirection === "asc" ? "\u2191" : "\u2193"}`}</Text>
+              </Box>
+              <Box>
+                {searchQuery && (
+                  <Text color="cyan">{`Search: "${searchQuery}" (${filteredTasks.length})`} </Text>
+                )}
+                <Text color="gray" dimColor>{filteredTasks.length} tasks</Text>
+              </Box>
             </Box>
-            <Box>
-              {searchQuery && (
-                <Text color="cyan">{`Search: "${searchQuery}" (${filteredTasks.length})`} </Text>
-              )}
-              <Text color="gray" dimColor>{filteredTasks.length} tasks</Text>
-            </Box>
+            {filteredTasks.length === 0 && apiFilteredTasks !== null ? (
+              <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor={activePanel === "tasks" ? "blue" : "gray"} paddingX={1} justifyContent="center" alignItems="center">
+                <Text color="gray">No tasks match filter. Press Esc to clear.</Text>
+              </Box>
+            ) : (
+              <TaskList
+                tasks={filteredTasks}
+                selectedIndex={taskIndex}
+                isFocused={activePanel === "tasks" && modal === "none"}
+                onIndexChange={setTaskIndex}
+                selectedIds={selectedIds}
+                sortField={sortField}
+                searchQuery={searchQuery}
+                pluginColumns={pluginExtensions?.getTaskColumns()}
+                pluginColumnContextMap={pluginColumnContextMap}
+              />
+            )}
           </Box>
-          {filteredTasks.length === 0 && apiFilteredTasks !== null ? (
-            <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor={activePanel === "tasks" ? "blue" : "gray"} paddingX={1} justifyContent="center" alignItems="center">
-              <Text color="gray">No tasks match filter. Press Esc to clear.</Text>
-            </Box>
-          ) : (
-            <TaskList
-              tasks={filteredTasks}
-              selectedIndex={taskIndex}
-              isFocused={activePanel === "tasks" && modal === "none"}
-              onIndexChange={setTaskIndex}
-              selectedIds={selectedIds}
-              sortField={sortField}
-              searchQuery={searchQuery}
-              pluginColumns={pluginExtensions?.getTaskColumns()}
-              pluginColumnContextMap={pluginColumnContextMap}
-            />
-          )}
+        </Box>
+
+        <ModalManager />
+
+        {pluginExtensions && pluginStatusBarContextMap && pluginExtensions.getStatusBarItems().length > 0 && (
+          <StatusBar
+            items={pluginExtensions.getStatusBarItems()}
+            contextMap={pluginStatusBarContextMap}
+          />
+        )}
+
+        <Box borderStyle="single" borderColor="gray" paddingX={1} justifyContent="space-between">
+          <Text>
+            {modal === "command" ? (
+              <>
+                <Text color="gray">[Esc]</Text><Text> cancel  </Text>
+                <Text color="gray">[Enter]</Text><Text> execute  </Text>
+                <Text color="gray">[Up/Down]</Text><Text> navigate</Text>
+              </>
+            ) : isSearching ? (
+              <>
+                <Text color="gray">[Esc]</Text><Text> cancel  </Text>
+                <Text color="gray">[Enter]</Text><Text> confirm</Text>
+              </>
+            ) : isRangeSelecting ? (
+              <>
+                <Text color="cyan">[v]</Text><Text> end range  </Text>
+                <Text color="gray">[j/k]</Text><Text> move  </Text>
+                <Text color="gray">[Esc]</Text><Text> cancel range</Text>
+              </>
+            ) : hasSelection ? (
+              <>
+                <Text color="yellow">[c]</Text><Text>omplete </Text>
+                <Text color="red">[d]</Text><Text>elete </Text>
+                <Text color="cyan">[1-4]</Text><Text>prio </Text>
+                <Text color="green">[t]</Text><Text>due </Text>
+                <Text color="blue">[m]</Text><Text>ove </Text>
+                <Text color="magenta">[l]</Text><Text>abel </Text>
+                <Text color="cyan">[v]</Text><Text> range </Text>
+                <Text color="gray">[Esc]</Text><Text> clear  </Text>
+                <Text color="magenta">({selectedIds.size} selected)</Text>
+              </>
+            ) : (
+              <>
+                <Text color="green">[a]</Text><Text>dd </Text>
+                <Text color="green">[N]</Text><Text>ew </Text>
+                <Text color="blue">[e]</Text><Text>dit </Text>
+                <Text color="yellow">[c]</Text><Text>omplete </Text>
+                <Text color="red">[d]</Text><Text>elete </Text>
+                <Text color="cyan">[1-4]</Text><Text>prio </Text>
+                <Text color="green">[t]</Text><Text>due </Text>
+                <Text color="blue">[m]</Text><Text>ove </Text>
+                <Text color="magenta">[l]</Text><Text>abel </Text>
+                <Text color="green">[y]</Text><Text>url </Text>
+                <Text color="cyan">[/]</Text><Text>search </Text>
+                <Text color="white">[?]</Text><Text>help </Text>
+                <Text color="gray">[q]</Text><Text>uit</Text>
+              </>
+            )}
+          </Text>
+          <Box>
+            {filteredTasks.length > 0 && (
+              <Text color="gray" dimColor>{taskIndex + 1}/{filteredTasks.length} </Text>
+            )}
+            {undoCountdown > 0 && lastAction ? (
+              <Text color="green" bold>[u]ndo ({undoCountdown}s)</Text>
+            ) : redoCountdown > 0 && lastRedo ? (
+              <Text color="blue" bold>(U)redo ({redoCountdown}s)</Text>
+            ) : statusMessage ? (
+              <Text color="yellow">{statusMessage}</Text>
+            ) : isLoading ? (
+              <Text color="cyan" dimColor>Syncing...</Text>
+            ) : null}
+          </Box>
         </Box>
       </Box>
-
-      <ModalManager
-        modal={modal}
-        setModal={setModal}
-        selectedTask={selectedTask}
-        selectedIds={selectedIds}
-        projects={projects}
-        labels={labels}
-        searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
-        sortField={sortField}
-        sortDirection={sortDirection}
-        filterProjectId={filterProjectId}
-        filterView={filterView}
-        commands={commands}
-        pluginExtensions={pluginExtensions}
-        handleAddTask={handleAddTask}
-        handleCreateTaskFull={handleCreateTaskFull}
-        handleAddSubtask={handleAddSubtask}
-        handleEditTask={handleEditTask}
-        handleRenameTask={handleRenameTask}
-        handleEditTaskFull={handleEditTaskFull}
-        handleDeleteConfirm={handleDeleteConfirm}
-        handleBulkDeleteConfirm={handleBulkDeleteConfirm}
-        handleSetDueDate={handleSetDueDate}
-        handleSetDeadline={handleSetDeadline}
-        handleMoveToProject={handleMoveToProject}
-        handleLabelsSave={handleLabelsSave}
-        handleFilterInput={handleFilterInput}
-        handleSortSelect={handleSortSelect}
-        handleSearchSubmit={handleSearchSubmit}
-        handleSearchCancel={handleSearchCancel}
-        handleCreateProject={handleCreateProject}
-        handleCreateLabel={handleCreateLabel}
-        renderQuickAddPreview={renderQuickAddPreview}
-        pendingPluginInput={pendingPluginInput}
-        handlePluginInput={handlePluginInput}
-      />
-
-      {pluginExtensions && pluginStatusBarContextMap && pluginExtensions.getStatusBarItems().length > 0 && (
-        <StatusBar
-          items={pluginExtensions.getStatusBarItems()}
-          contextMap={pluginStatusBarContextMap}
-        />
-      )}
-
-      <Box borderStyle="single" borderColor="gray" paddingX={1} justifyContent="space-between">
-        <Text>
-          {modal === "command" ? (
-            <>
-              <Text color="gray">[Esc]</Text><Text> cancel  </Text>
-              <Text color="gray">[Enter]</Text><Text> execute  </Text>
-              <Text color="gray">[Up/Down]</Text><Text> navigate</Text>
-            </>
-          ) : isSearching ? (
-            <>
-              <Text color="gray">[Esc]</Text><Text> cancel  </Text>
-              <Text color="gray">[Enter]</Text><Text> confirm</Text>
-            </>
-          ) : isRangeSelecting ? (
-            <>
-              <Text color="cyan">[v]</Text><Text> end range  </Text>
-              <Text color="gray">[j/k]</Text><Text> move  </Text>
-              <Text color="gray">[Esc]</Text><Text> cancel range</Text>
-            </>
-          ) : hasSelection ? (
-            <>
-              <Text color="yellow">[c]</Text><Text>omplete </Text>
-              <Text color="red">[d]</Text><Text>elete </Text>
-              <Text color="cyan">[1-4]</Text><Text>prio </Text>
-              <Text color="green">[t]</Text><Text>due </Text>
-              <Text color="blue">[m]</Text><Text>ove </Text>
-              <Text color="magenta">[l]</Text><Text>abel </Text>
-              <Text color="cyan">[v]</Text><Text> range </Text>
-              <Text color="gray">[Esc]</Text><Text> clear  </Text>
-              <Text color="magenta">({selectedIds.size} selected)</Text>
-            </>
-          ) : (
-            <>
-              <Text color="green">[a]</Text><Text>dd </Text>
-              <Text color="green">[N]</Text><Text>ew </Text>
-              <Text color="blue">[e]</Text><Text>dit </Text>
-              <Text color="yellow">[c]</Text><Text>omplete </Text>
-              <Text color="red">[d]</Text><Text>elete </Text>
-              <Text color="cyan">[1-4]</Text><Text>prio </Text>
-              <Text color="green">[t]</Text><Text>due </Text>
-              <Text color="blue">[m]</Text><Text>ove </Text>
-              <Text color="magenta">[l]</Text><Text>abel </Text>
-              <Text color="green">[y]</Text><Text>url </Text>
-              <Text color="cyan">[/]</Text><Text>search </Text>
-              <Text color="white">[?]</Text><Text>help </Text>
-              <Text color="gray">[q]</Text><Text>uit</Text>
-            </>
-          )}
-        </Text>
-        <Box>
-          {filteredTasks.length > 0 && (
-            <Text color="gray" dimColor>{taskIndex + 1}/{filteredTasks.length} </Text>
-          )}
-          {undoCountdown > 0 && lastAction ? (
-            <Text color="green" bold>[u]ndo ({undoCountdown}s)</Text>
-          ) : redoCountdown > 0 && lastRedo ? (
-            <Text color="blue" bold>(U)redo ({redoCountdown}s)</Text>
-          ) : statusMessage ? (
-            <Text color="yellow">{statusMessage}</Text>
-          ) : isLoading ? (
-            <Text color="cyan" dimColor>Syncing...</Text>
-          ) : null}
-        </Box>
-      </Box>
-    </Box>
+    </TasksViewProvider>
   );
 }

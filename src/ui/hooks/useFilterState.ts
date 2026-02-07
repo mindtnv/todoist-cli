@@ -4,6 +4,7 @@ import type { SidebarItem } from "../components/Sidebar.tsx";
 import type { SortField } from "../../utils/sorting.ts";
 import { sortTasks } from "../../utils/sorting.ts";
 import { getTasks } from "../../api/tasks.ts";
+import { getLocalDateString } from "../../utils/date-format.ts";
 import type { Modal } from "../components/ModalManager.tsx";
 
 interface UseFilterStateOptions {
@@ -48,8 +49,7 @@ export function useFilterState({
     if (filterView.startsWith("Filter: ") && apiFilteredTasks !== null) {
       return apiFilteredTasks;
     }
-    const today = new Date();
-    const localDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    const localDate = getLocalDateString();
     return tasks.filter((t) => {
       if (filterSectionId && filterProjectId) return t.project_id === filterProjectId && t.section_id === filterSectionId;
       if (filterProjectId) return t.project_id === filterProjectId;
