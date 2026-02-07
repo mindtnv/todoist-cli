@@ -1,4 +1,4 @@
-import { join, dirname } from "path";
+import { join, dirname, resolve } from "path";
 import { existsSync, readFileSync, symlinkSync, lstatSync, unlinkSync, realpathSync } from "fs";
 import type {
   TodoistPlugin, PluginManifest, PluginContext,
@@ -113,7 +113,9 @@ export async function loadPlugins(
   for (const [name, pluginConfig] of Object.entries(pluginConfigs)) {
     if (pluginConfig.enabled === false) continue;
 
-    const pluginDir = pluginConfig.path ?? join(PLUGINS_DIR, name);
+    const pluginDir = pluginConfig.path
+      ? resolve(process.cwd(), pluginConfig.path)
+      : join(PLUGINS_DIR, name);
     if (!existsSync(pluginDir)) {
       console.warn(`[plugins] Directory not found for "${name}", skipping`);
       continue;
