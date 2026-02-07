@@ -1,6 +1,5 @@
 import { join } from "path";
 import { existsSync, readFileSync } from "fs";
-import { homedir } from "os";
 import type {
   TodoistPlugin, PluginManifest, PluginContext,
   HookRegistry, ViewRegistry, ExtensionRegistry, PaletteRegistry,
@@ -9,9 +8,9 @@ import type {
 import { createPluginStorage } from "./storage.ts";
 import type { PluginStorageWithClose } from "./storage.ts";
 import { createApiProxy } from "./api-proxy.ts";
-import { getConfig } from "../config/index.ts";
+import { CONFIG_DIR, getConfig } from "../config/index.ts";
 
-const PLUGINS_DIR = join(homedir(), ".config", "todoist-cli", "plugins");
+const PLUGINS_DIR = join(CONFIG_DIR, "plugins");
 
 function createLogger(pluginName: string): PluginLogger {
   return {
@@ -90,7 +89,7 @@ export async function loadPlugins(
         }
       }
 
-      const mainFile = manifest?.main ?? "./dist/index.js";
+      const mainFile = manifest?.main ?? "./src/index.ts";
       const modulePath = join(pluginDir, mainFile);
       const mod = await import(modulePath);
       const plugin: TodoistPlugin = mod.default ?? mod;

@@ -4,7 +4,8 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from "fs";
 import TOML from "@iarna/toml";
 import type { TaskTemplate } from "../api/types.ts";
 
-export const CONFIG_DIR = join(homedir(), ".config", "todoist-cli");
+export const CONFIG_DIR =
+  process.env.TODOIST_CLI_CONFIG_DIR || join(homedir(), ".config", "todoist-cli");
 const CONFIG_PATH = join(CONFIG_DIR, "config.toml");
 const TEMPLATES_PATH = join(CONFIG_DIR, "templates.json");
 

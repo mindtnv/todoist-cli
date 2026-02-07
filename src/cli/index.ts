@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import { program } from "commander";
 import chalk from "chalk";
 import { registerTaskCommand, printTaskTable, groupByDate, pickFields } from "./commands/task/index.ts";
@@ -117,7 +117,7 @@ async function runWithWatch(interval: number, fn: () => Promise<void>): Promise<
 program
   .name("todoist")
   .description("CLI tool for managing Todoist tasks")
-  .version("0.4.0")
+  .version("0.5.0")
   .option("--debug", "Enable debug output")
   .hook("preAction", () => {
     if (program.opts().debug) {

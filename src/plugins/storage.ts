@@ -1,22 +1,10 @@
-import { mkdirSync, existsSync, readFileSync, writeFileSync } from "fs";
+import { mkdirSync, existsSync } from "fs";
 import { join } from "path";
+import { Database } from "bun:sqlite";
 import type { PluginStorage } from "./types.ts";
 
 export interface PluginStorageWithClose extends PluginStorage {
   close(): void;
-}
-
-function loadJson<T>(path: string, fallback: T): T {
-  if (!existsSync(path)) return fallback;
-  try {
-    return JSON.parse(readFileSync(path, "utf-8")) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-function saveJson(path: string, data: unknown): void {
-  writeFileSync(path, JSON.stringify(data, null, 2) + "\n");
 }
 
 export function createPluginStorage(dataDir: string): PluginStorageWithClose {
@@ -24,47 +12,90 @@ export function createPluginStorage(dataDir: string): PluginStorageWithClose {
     mkdirSync(dataDir, { recursive: true });
   }
 
-  const kvPath = join(dataDir, "kv.json");
-  const taskDataPath = join(dataDir, "task-data.json");
+  const db = new Database(join(dataDir, "data.db"));
+  db.exec("PRAGMA journal_mode=WAL");
 
-  let kv: Record<string, unknown> = loadJson(kvPath, {});
-  let taskData: Record<string, Record<string, unknown>> = loadJson(taskDataPath, {});
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS kv (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS task_data (
+      task_id TEXT,
+      key TEXT,
+      value TEXT,
+      PRIMARY KEY (task_id, key)
+    )
+  `);
+
+  // Prepared statements
+  const kvGet = db.prepare("SELECT value FROM kv WHERE key = ?");
+  const kvSet = db.prepare(
+    "INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)",
+  );
+  const kvDelete = db.prepare("DELETE FROM kv WHERE key = ?");
+  const kvListAll = db.prepare("SELECT key FROM kv");
+  const kvListPrefix = db.prepare("SELECT key FROM kv WHERE key LIKE ?");
+
+  const tdGet = db.prepare(
+    "SELECT value FROM task_data WHERE task_id = ? AND key = ?",
+  );
+  const tdSet = db.prepare(
+    "INSERT OR REPLACE INTO task_data (task_id, key, value) VALUES (?, ?, ?)",
+  );
 
   return {
     async get<T>(key: string): Promise<T | null> {
-      const value = kv[key];
-      return value !== undefined ? (value as T) : null;
+      const row = kvGet.get(key) as { value: string } | null;
+      if (!row) return null;
+      try {
+        return JSON.parse(row.value) as T;
+      } catch {
+        return null;
+      }
     },
 
     async set<T>(key: string, value: T): Promise<void> {
-      kv[key] = value;
-      saveJson(kvPath, kv);
+      kvSet.run(key, JSON.stringify(value));
     },
 
     async delete(key: string): Promise<void> {
-      delete kv[key];
-      saveJson(kvPath, kv);
+      kvDelete.run(key);
     },
 
     async list(prefix?: string): Promise<string[]> {
-      const keys = Object.keys(kv);
-      if (!prefix) return keys;
-      return keys.filter((k) => k.startsWith(prefix));
+      if (!prefix) {
+        const rows = kvListAll.all() as { key: string }[];
+        return rows.map((r) => r.key);
+      }
+      // Escape % and _ in the prefix for LIKE, then append %
+      const escaped = prefix.replace(/%/g, "\\%").replace(/_/g, "\\_");
+      const rows = kvListPrefix.all(`${escaped}%`) as { key: string }[];
+      return rows.map((r) => r.key);
     },
 
     async getTaskData<T>(taskId: string, key: string): Promise<T | null> {
-      const value = taskData[taskId]?.[key];
-      return value !== undefined ? (value as T) : null;
+      const row = tdGet.get(taskId, key) as { value: string } | null;
+      if (!row) return null;
+      try {
+        return JSON.parse(row.value) as T;
+      } catch {
+        return null;
+      }
     },
 
-    async setTaskData<T>(taskId: string, key: string, value: T): Promise<void> {
-      if (!taskData[taskId]) taskData[taskId] = {};
-      taskData[taskId][key] = value;
-      saveJson(taskDataPath, taskData);
+    async setTaskData<T>(
+      taskId: string,
+      key: string,
+      value: T,
+    ): Promise<void> {
+      tdSet.run(taskId, key, JSON.stringify(value));
     },
 
     close() {
-      // No-op — JSON files are written synchronously on each mutation
+      db.close();
     },
   };
 }

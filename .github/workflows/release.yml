@@ -47,25 +47,23 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           TAG_VERSION="${GITHUB_REF#refs/tags/v}"
-          PKG_VERSION=$(node -p "require('./package.json').version")
+          PKG_VERSION=$(bun -e "console.log(require('./package.json').version)")
           if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
             echo "::error::Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
             exit 1
           fi
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          registry-url: "https://registry.npmjs.org"
+      - name: Configure npm registry
+        run: echo "//registry.npmjs.org/:_authToken=\${NPM_TOKEN}" > ~/.npmrc
 
       - name: Publish to npm
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry-run == true) }}
         run: npm publish --access public
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish dry run
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run == true }}
         run: npm publish --access public --dry-run
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
