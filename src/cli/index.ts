@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { program } from "commander";
 import chalk from "chalk";
-import { registerTaskCommand, printTaskTable, groupByDate, pickFields } from "./task.ts";
+import { registerTaskCommand, printTaskTable, groupByDate, pickFields } from "./commands/task/index.ts";
 import { registerProjectCommand } from "./project.ts";
 import { registerLabelCommand } from "./label.ts";
 import { registerCommentCommand } from "./comment.ts";
@@ -15,8 +15,11 @@ import { registerMatrixCommand } from "./matrix.ts";
 import { registerLogCommand } from "./log.ts";
 import { registerStatsCommand } from "./stats.ts";
 import { registerFilterCommand } from "./filter.ts";
+import { registerPluginCommand } from "./plugin.ts";
+import { loadCliPlugins } from "./plugin-loader.ts";
 import { getTasks, createTask } from "../api/tasks.ts";
-import { didYouMean, handleError } from "../utils/errors.ts";
+import { didYouMean, handleError, setDebug, debug } from "../utils/errors.ts";
+import { validateContent, validatePriority } from "../utils/validation.ts";
 import type { Task, Priority, CreateTaskParams } from "../api/types.ts";
 import { padEnd, priorityColor, priorityLabel, ID_WIDTH, PRI_WIDTH, getContentWidth, getDueWidth } from "../utils/format.ts";
 import { formatTasksDelimited } from "../utils/output.ts";
@@ -114,7 +117,14 @@ async function runWithWatch(interval: number, fn: () => Promise<void>): Promise<
 program
   .name("todoist")
   .description("CLI tool for managing Todoist tasks")
-  .version("0.2.0");
+  .version("0.2.0")
+  .option("--debug", "Enable debug output")
+  .hook("preAction", () => {
+    if (program.opts().debug) {
+      setDebug(true);
+      debug("Debug mode enabled");
+    }
+  });
 
 registerAuthCommand(program);
 registerTaskCommand(program);
@@ -130,6 +140,7 @@ registerMatrixCommand(program);
 registerLogCommand(program);
 registerStatsCommand(program);
 registerFilterCommand(program);
+registerPluginCommand(program);
 
 // Shortcut: todoist today
 program
@@ -445,6 +456,7 @@ program
           try {
             const parsed = parseQuickAdd(line);
             const params: CreateTaskParams = { content: parsed.content };
+            if (parsed.description) params.description = parsed.description;
             if (parsed.priority) params.priority = parsed.priority;
             if (parsed.labels.length > 0) params.labels = parsed.labels;
             if (parsed.due_string) params.due_string = parsed.due_string;
@@ -482,23 +494,42 @@ program
         cliExit(1);
       }
 
+      // Validate content
+      const contentError = validateContent(text);
+      if (contentError) {
+        console.error(chalk.red(contentError));
+        cliExit(1);
+      }
+
+      // Validate priority if provided
+      if (opts.priority) {
+        const p = parseInt(opts.priority, 10);
+        const priError = validatePriority(p);
+        if (priError) {
+          console.error(chalk.red(priError));
+          cliExit(1);
+        }
+      }
+
       // Dry-run mode
       if (opts.dryRun) {
         const parsed = parseQuickAdd(text);
         console.log(chalk.bold("Preview:"));
-        console.log(`  ${chalk.dim("Content:")}   ${parsed.content}`);
-        if (parsed.due_string) console.log(`  ${chalk.dim("Due:")}       ${parsed.due_string}`);
-        if (parsed.priority) console.log(`  ${chalk.dim("Priority:")}  p${parsed.priority}`);
-        if (parsed.project_name) console.log(`  ${chalk.dim("Project:")}   ${parsed.project_name}`);
-        if (parsed.section_name) console.log(`  ${chalk.dim("Section:")}   ${parsed.section_name}`);
-        if (parsed.deadline) console.log(`  ${chalk.dim("Deadline:")}  ${parsed.deadline}`);
-        if (parsed.labels.length > 0) console.log(`  ${chalk.dim("Labels:")}    ${parsed.labels.join(", ")}`);
+        console.log(`  ${chalk.dim("Content:")}       ${parsed.content}`);
+        if (parsed.description) console.log(`  ${chalk.dim("Description:")}   ${parsed.description}`);
+        if (parsed.due_string) console.log(`  ${chalk.dim("Due:")}           ${parsed.due_string}`);
+        if (parsed.priority) console.log(`  ${chalk.dim("Priority:")}      p${parsed.priority}`);
+        if (parsed.project_name) console.log(`  ${chalk.dim("Project:")}       ${parsed.project_name}`);
+        if (parsed.section_name) console.log(`  ${chalk.dim("Section:")}       ${parsed.section_name}`);
+        if (parsed.deadline) console.log(`  ${chalk.dim("Deadline:")}      ${parsed.deadline}`);
+        if (parsed.labels.length > 0) console.log(`  ${chalk.dim("Labels:")}        ${parsed.labels.join(", ")}`);
         cliExit(0);
       }
 
       // Parse and create
       const parsed = parseQuickAdd(text);
       const params: CreateTaskParams = { content: parsed.content };
+      if (parsed.description) params.description = parsed.description;
       if (parsed.priority) params.priority = parsed.priority;
       if (parsed.labels.length > 0) params.labels = parsed.labels;
       if (parsed.due_string) params.due_string = parsed.due_string;
@@ -582,7 +613,7 @@ const knownCommands = [
   "task", "project", "label", "comment", "template", "section",
   "auth", "today", "inbox", "ui", "completion", "help",
   "completed", "review", "matrix", "log", "stats",
-  "next", "upcoming", "overdue", "search", "deadlines", "a", "filter",
+  "next", "upcoming", "overdue", "search", "deadlines", "a", "filter", "plugin",
   ...Object.keys(savedFilters),
 ];
 
@@ -599,4 +630,9 @@ program.on("command:*", (operands: string[]) => {
   }
 });
 
-program.parse();
+async function main() {
+  await loadCliPlugins(program);
+  await program.parseAsync();
+}
+
+main();

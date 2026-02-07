@@ -6,15 +6,40 @@ export const EXIT_AUTH = 3;
 export const EXIT_NETWORK = 4;
 export const EXIT_NOT_FOUND = 5;
 
+export enum ErrorCode {
+  AUTH_FAILED = "AUTH_FAILED",
+  RATE_LIMITED = "RATE_LIMITED",
+  NOT_FOUND = "NOT_FOUND",
+  VALIDATION = "VALIDATION",
+  NETWORK = "NETWORK",
+  UNKNOWN = "UNKNOWN",
+}
+
+let DEBUG = false;
+
+export function setDebug(value: boolean): void {
+  DEBUG = value;
+}
+
+export function isDebug(): boolean {
+  return DEBUG;
+}
+
+export function debug(...args: unknown[]): void {
+  if (DEBUG) console.error("[debug]", ...args);
+}
+
 export class CliError extends Error {
   code: number;
+  errorCode: ErrorCode;
   suggestion?: string;
   helpUrl?: string;
 
-  constructor(message: string, opts: { code: number; suggestion?: string; helpUrl?: string }) {
+  constructor(message: string, opts: { code: number; errorCode?: ErrorCode; suggestion?: string; helpUrl?: string }) {
     super(message);
     this.name = "CliError";
     this.code = opts.code;
+    this.errorCode = opts.errorCode ?? ErrorCode.UNKNOWN;
     this.suggestion = opts.suggestion;
     this.helpUrl = opts.helpUrl;
   }
@@ -23,39 +48,63 @@ export class CliError extends Error {
 export function wrapApiError(err: unknown): CliError {
   const message = err instanceof Error ? err.message : String(err);
 
-  if (message.includes("Authentication failed") || message.includes("401")) {
-    return new CliError("Authentication failed.", {
+  debug("wrapApiError called with:", message);
+
+  // Check for HTTP status codes in the error message
+  const statusMatch = message.match(/\b(4\d{2}|5\d{2})\b/);
+  const statusCode = statusMatch ? parseInt(statusMatch[1]!, 10) : null;
+
+  if (message.includes("Authentication failed") || message.includes("401") || message.includes("403") || statusCode === 401 || statusCode === 403) {
+    return new CliError("Authentication failed. Run `todoist auth` to set your API token.", {
       code: EXIT_AUTH,
+      errorCode: ErrorCode.AUTH_FAILED,
       suggestion: "Run `todoist auth` to set a valid API token.",
     });
   }
 
-  if (message.includes("Rate limit") || message.includes("429")) {
-    return new CliError("Rate limit exceeded.", {
+  if (message.includes("Rate limit") || message.includes("429") || statusCode === 429) {
+    return new CliError("Rate limit exceeded. Please wait a moment and try again.", {
       code: EXIT_NETWORK,
-      suggestion: "Wait a moment and try again.",
+      errorCode: ErrorCode.RATE_LIMITED,
+      suggestion: "Wait a moment and try again. Todoist allows ~450 requests per 15 minutes.",
     });
   }
 
-  if (message.includes("404") || message.includes("not found")) {
-    return new CliError("Resource not found.", {
+  if (message.includes("404") || message.includes("not found") || statusCode === 404) {
+    return new CliError("Resource not found. The task/project may have been deleted.", {
       code: EXIT_NOT_FOUND,
-      suggestion: "Check the ID and try again.",
+      errorCode: ErrorCode.NOT_FOUND,
+      suggestion: "Check the ID and try again. The resource may have been deleted or moved.",
     });
   }
 
-  if (message.includes("fetch") || message.includes("ECONNREFUSED") || message.includes("ENOTFOUND")) {
+  if (statusCode && statusCode >= 500) {
+    return new CliError("Todoist API is experiencing issues. Try again later.", {
+      code: EXIT_NETWORK,
+      errorCode: ErrorCode.NETWORK,
+      suggestion: "The Todoist servers are having problems. Check https://status.todoist.com for updates.",
+    });
+  }
+
+  if (message.includes("fetch") || message.includes("ECONNREFUSED") || message.includes("ENOTFOUND") || message.includes("ETIMEDOUT")) {
     return new CliError("Network error — could not reach the Todoist API.", {
       code: EXIT_NETWORK,
+      errorCode: ErrorCode.NETWORK,
       suggestion: "Check your internet connection and try again.",
     });
   }
 
-  return new CliError(message, { code: 1 });
+  return new CliError(message, { code: 1, errorCode: ErrorCode.UNKNOWN });
 }
 
 export function formatCliError(err: CliError): string {
   let out = chalk.red(`Error: ${err.message}`);
+  if (DEBUG) {
+    out += `\n${chalk.dim(`[${err.errorCode}] exit code: ${err.code}`)}`;
+    if (err.stack) {
+      out += `\n${chalk.dim(err.stack)}`;
+    }
+  }
   if (err.suggestion) {
     out += `\n${chalk.yellow("Hint:")} ${err.suggestion}`;
   }
@@ -104,6 +153,7 @@ export function didYouMean(input: string, candidates: string[]): string | null {
 
 export function handleError(err: unknown): never {
   const cliErr = err instanceof CliError ? err : wrapApiError(err);
+  debug("handleError:", cliErr.errorCode, cliErr.message);
   console.error(formatCliError(cliErr));
   process.exit(cliErr.code);
 }

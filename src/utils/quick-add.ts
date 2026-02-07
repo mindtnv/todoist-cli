@@ -3,6 +3,7 @@ import { getProjects } from "../api/projects.ts";
 
 export interface QuickAddResult {
   content: string;
+  description?: string;
   priority?: Priority;
   labels: string[];
   due_string?: string;
@@ -17,6 +18,17 @@ const PROJECT_RE = /#"([^"]+)"|#'([^']+)'|#(\S+)/;
 const LABEL_RE = /@(\S+)/g;
 const SECTION_RE = /\/\/(\S+)/;
 const DEADLINE_RE = /\{(\d{4}-\d{2}-\d{2})\}/;
+
+// Description syntax: "// description text" (double slash + space separates description from content)
+const DESCRIPTION_RE = /\s+\/\/\s+(.*)/;
+
+// Recurrence syntax: !daily, !weekly, !monthly, !yearly, !weekdays, !every <text>
+const RECURRENCE_SIMPLE_RE = /!(daily|weekly|monthly|yearly|weekdays)\b/;
+const RECURRENCE_EVERY_RE = /!every\s+([^#@!{}\\/]+?)(?=\s+[#@!{p]|\s+\/\/|\s*$)/;
+
+// Relative date patterns: +Nd for days, +Nw for weeks
+const RELATIVE_DAYS_RE = /\+(\d+)d\b/;
+const RELATIVE_WEEKS_RE = /\+(\d+)w\b/;
 
 const DATE_KEYWORDS = [
   "today",
@@ -61,6 +73,15 @@ export function parseQuickAdd(input: string): QuickAddResult {
   let text = input;
   const labels: string[] = [];
 
+  // Extract description first: "// description text" (double slash + space)
+  // Must happen before section extraction since //SectionName (no space) is different
+  let description: string | undefined;
+  const descMatch = DESCRIPTION_RE.exec(text);
+  if (descMatch) {
+    description = descMatch[1]!.trim();
+    text = text.slice(0, descMatch.index).trim();
+  }
+
   // Extract priority
   let priority: Priority | undefined;
   const priMatch = PRIORITY_RE.exec(text);
@@ -75,6 +96,46 @@ export function parseQuickAdd(input: string): QuickAddResult {
   if (deadlineMatch) {
     deadline = deadlineMatch[1]!;
     text = text.replace(deadlineMatch[0], "").trim();
+  }
+
+  // Extract recurrence syntax: !daily, !weekly, !every <text>
+  let dueString: string | undefined;
+  const recurrenceSimpleMatch = RECURRENCE_SIMPLE_RE.exec(text);
+  const recurrenceEveryMatch = RECURRENCE_EVERY_RE.exec(text);
+
+  if (recurrenceEveryMatch) {
+    // !every takes precedence when it comes before simple recurrence
+    dueString = "every " + recurrenceEveryMatch[1]!.trim();
+    text = text.replace(recurrenceEveryMatch[0], "").trim();
+  } else if (recurrenceSimpleMatch) {
+    const keyword = recurrenceSimpleMatch[1]!;
+    // Map shorthand to Todoist-compatible due_string
+    const recurrenceMap: Record<string, string> = {
+      daily: "every day",
+      weekly: "every week",
+      monthly: "every month",
+      yearly: "every year",
+      weekdays: "every weekday",
+    };
+    dueString = recurrenceMap[keyword] ?? keyword;
+    text = text.replace(recurrenceSimpleMatch[0], "").trim();
+  }
+
+  // Extract relative date patterns: +Nd, +Nw
+  if (!dueString) {
+    const relativeDaysMatch = RELATIVE_DAYS_RE.exec(text);
+    if (relativeDaysMatch) {
+      const n = parseInt(relativeDaysMatch[1]!, 10);
+      dueString = n === 1 ? "in 1 day" : `in ${n} days`;
+      text = text.replace(relativeDaysMatch[0], "").trim();
+    } else {
+      const relativeWeeksMatch = RELATIVE_WEEKS_RE.exec(text);
+      if (relativeWeeksMatch) {
+        const n = parseInt(relativeWeeksMatch[1]!, 10);
+        dueString = n === 1 ? "in 1 week" : `in ${n} weeks`;
+        text = text.replace(relativeWeeksMatch[0], "").trim();
+      }
+    }
   }
 
   // Extract section (//SectionName) before project (#Name) to avoid conflicts
@@ -101,12 +162,13 @@ export function parseQuickAdd(input: string): QuickAddResult {
   }
   text = text.replace(LABEL_RE, "").trim();
 
-  // Extract date
-  let dueString: string | undefined;
-  const dateResult = extractDatePhrase(text);
-  if (dateResult) {
-    dueString = dateResult.date;
-    text = dateResult.remaining;
+  // Extract date keywords (only if no recurrence/relative date was already found)
+  if (!dueString) {
+    const dateResult = extractDatePhrase(text);
+    if (dateResult) {
+      dueString = dateResult.date;
+      text = dateResult.remaining;
+    }
   }
 
   // Clean up extra whitespace
@@ -114,6 +176,7 @@ export function parseQuickAdd(input: string): QuickAddResult {
 
   return {
     content: text,
+    description,
     priority,
     labels,
     due_string: dueString,

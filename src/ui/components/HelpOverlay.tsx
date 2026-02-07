@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
+import type { KeybindingDefinition } from "../../plugins/types.ts";
 
 interface HelpOverlayProps {
   onClose: () => void;
+  pluginKeybindings?: KeybindingDefinition[];
 }
 
 interface KeyBinding {
@@ -26,6 +28,8 @@ const helpSections: Section[] = [
       { key: "Ctrl-d", description: "Page down" },
       { key: "Ctrl-u", description: "Page up" },
       { key: "Tab", description: "Switch panel" },
+      { key: "h", description: "Go to sidebar (from tasks)" },
+      { key: "l", description: "Go to tasks (from sidebar)" },
       { key: "Enter", description: "Open task detail" },
     ],
   },
@@ -35,6 +39,7 @@ const helpSections: Section[] = [
       { key: "a", description: "Add new task" },
       { key: "A (Shift-a)", description: "Add subtask" },
       { key: "e", description: "Edit task (full modal)" },
+      { key: "r", description: "Rename task (inline)" },
       { key: "c", description: "Complete task" },
       { key: "d", description: "Delete task" },
       { key: "1 / 2 / 3 / 4", description: "Set priority" },
@@ -43,8 +48,11 @@ const helpSections: Section[] = [
       { key: "m", description: "Move to project" },
       { key: "l", description: "Edit labels" },
       { key: "o", description: "Open in browser" },
+      { key: "y", description: "Copy task URL" },
+      { key: "Y (Shift-y)", description: "Duplicate task" },
       { key: "u", description: "Undo last action (10s)" },
-      { key: "r", description: "Refresh tasks" },
+      { key: "U (Shift-u)", description: "Redo last undo (10s)" },
+      { key: "R (Shift-r)", description: "Refresh tasks" },
     ],
   },
   {
@@ -68,13 +76,27 @@ const helpSections: Section[] = [
     ],
   },
   {
+    title: "Quick Filters",
+    bindings: [
+      { key: "!", description: "Show Inbox" },
+      { key: "@", description: "Show Today" },
+      { key: "#", description: "Show Upcoming" },
+    ],
+  },
+  {
     title: "Detail View",
     bindings: [
+      { key: "e", description: "Edit full task" },
+      { key: "c", description: "Complete task" },
+      { key: "d", description: "Delete task" },
+      { key: "1-4", description: "Set priority" },
+      { key: "t", description: "Set due date" },
+      { key: "D", description: "Set deadline" },
+      { key: "m", description: "Move to project" },
+      { key: "l", description: "Edit labels" },
       { key: "n", description: "Add comment" },
       { key: "o", description: "Open in browser" },
       { key: "j / k", description: "Scroll content" },
-      { key: "c", description: "Complete task" },
-      { key: "d", description: "Delete task" },
       { key: "Esc", description: "Go back" },
     ],
   },
@@ -89,18 +111,36 @@ const helpSections: Section[] = [
   },
 ];
 
-export function HelpOverlay({ onClose }: HelpOverlayProps) {
+export function HelpOverlay({ onClose, pluginKeybindings }: HelpOverlayProps) {
   const [scrollOffset, setScrollOffset] = useState(0);
   const { stdout } = useStdout();
+
+  const allSections = useMemo(() => {
+    const sections = [...helpSections];
+    if (pluginKeybindings?.length) {
+      const groups = new Map<string, Array<{ key: string; description: string }>>();
+      for (const kb of pluginKeybindings) {
+        const existing = groups.get(kb.helpSection) ?? [];
+        existing.push({ key: kb.key, description: kb.description });
+        groups.set(kb.helpSection, existing);
+      }
+      for (const [title, bindings] of groups) {
+        sections.push({ title, bindings });
+      }
+    }
+    return sections;
+  }, [pluginKeybindings]);
+
   // Build flat list of all lines for scrolling
   const allLines: Array<{ type: "title"; text: string } | { type: "binding"; key: string; desc: string }> = [];
-  for (const section of helpSections) {
+  for (const section of allSections) {
     allLines.push({ type: "title", text: section.title });
     for (const b of section.bindings) {
       allLines.push({ type: "binding", key: b.key, desc: b.description });
     }
   }
   const viewHeight = Math.max(5, (stdout?.rows ?? 24) - 10);
+  const helpWidth = Math.min(60, Math.max(40, (stdout?.columns ?? 80) - 10));
   const maxScroll = Math.max(0, allLines.length - viewHeight);
 
   useInput((input, key) => {
@@ -127,7 +167,7 @@ export function HelpOverlay({ onClose }: HelpOverlayProps) {
       borderColor="cyan"
       paddingX={2}
       paddingY={1}
-      width={50}
+      width={helpWidth}
     >
       <Box justifyContent="center" marginBottom={1}>
         <Text bold color="cyan">Keyboard Shortcuts</Text>

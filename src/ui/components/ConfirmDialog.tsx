@@ -8,9 +8,9 @@ interface ConfirmDialogProps {
 
 export function ConfirmDialog({ message, onConfirm, onCancel }: ConfirmDialogProps) {
   useInput((input, key) => {
-    if (input === "y" || input === "Y" || key.return) {
+    if (input === "y" || input === "Y") {
       onConfirm();
-    } else if (input === "n" || input === "N" || key.escape) {
+    } else if (input === "n" || input === "N" || key.escape || key.return) {
       onCancel();
     }
   });
@@ -18,8 +18,10 @@ export function ConfirmDialog({ message, onConfirm, onCancel }: ConfirmDialogPro
   return (
     <Box borderStyle="single" borderColor="red" paddingX={1}>
       <Text>
-        <Text color="red">{message}</Text>
-        <Text> [y/n]</Text>
+        <Text color="red" bold>⚠ {message}</Text>
+        <Text dimColor> [y/</Text>
+        <Text bold>N</Text>
+        <Text dimColor>]</Text>
       </Text>
     </Box>
   );

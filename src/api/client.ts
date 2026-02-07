@@ -2,9 +2,39 @@ import { requireToken } from "../config/index.ts";
 
 const BASE_URL = "https://api.todoist.com/api/v1";
 
+const MAX_RETRIES = 3;
+const BASE_BACKOFF_MS = 1000;
+const RATE_LIMIT_BASE_BACKOFF_MS = 5000;
+const REQUEST_TIMEOUT_MS = 30_000;
+const JITTER_FACTOR = 0.25;
+
 interface PaginatedResponse<T> {
   results: T[];
   next_cursor: string | null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Add ±25% jitter to a delay value. */
+function addJitter(ms: number): number {
+  const jitter = ms * JITTER_FACTOR * (2 * Math.random() - 1);
+  return Math.max(0, ms + jitter);
+}
+
+/** Check if an error is a network/connectivity error worth retrying. */
+function isNetworkError(err: unknown): boolean {
+  if (err instanceof TypeError) return true;
+  if (err instanceof Error && err.message.includes("fetch failed")) return true;
+  return false;
+}
+
+/** Check if an error is a timeout abort. */
+function isTimeoutError(err: unknown): boolean {
+  if (err instanceof DOMException && err.name === "AbortError") return true;
+  if (err instanceof Error && err.name === "AbortError") return true;
+  return false;
 }
 
 class TodoistClient {
@@ -21,7 +51,7 @@ class TodoistClient {
       const query = new URLSearchParams(params).toString();
       if (query) url += `?${query}`;
     }
-    const res = await this.safeFetch(url, { headers: this.headers });
+    const res = await this.fetchWithRetry(url, { headers: this.headers });
     const data = await this.handleResponse<T | PaginatedResponse<unknown>>(res);
     if (data && typeof data === "object" && "results" in data && "next_cursor" in data) {
       return (data as PaginatedResponse<unknown>).results as T;
@@ -30,7 +60,7 @@ class TodoistClient {
   }
 
   async post<T>(path: string, body?: Record<string, unknown>): Promise<T> {
-    const res = await this.safeFetch(`${BASE_URL}${path}`, {
+    const res = await this.fetchWithRetry(`${BASE_URL}${path}`, {
       method: "POST",
       headers: this.headers,
       body: body ? JSON.stringify(body) : undefined,
@@ -39,7 +69,7 @@ class TodoistClient {
   }
 
   async del(path: string): Promise<void> {
-    const res = await this.safeFetch(`${BASE_URL}${path}`, {
+    const res = await this.fetchWithRetry(`${BASE_URL}${path}`, {
       method: "DELETE",
       headers: this.headers,
     });
@@ -47,17 +77,105 @@ class TodoistClient {
     await res.text();
   }
 
-  private async safeFetch(url: string, init: RequestInit): Promise<Response> {
-    try {
-      return await fetch(url, init);
-    } catch (err) {
-      if (err instanceof TypeError) {
+  /**
+   * Fetch with retry, exponential backoff, rate-limit handling, and timeout.
+   * Retries on: network errors, timeouts, 5xx responses, and 429 rate limits.
+   * Does NOT retry on 4xx errors (except 429).
+   */
+  private async fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
+    let lastError: Error | undefined;
+    let lastRetryAfter: number | undefined;
+    let skipNextBackoff = false;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      // Wait before retrying (skip delay on first attempt and after 429 which has its own delay)
+      if (attempt > 0 && !skipNextBackoff) {
+        const backoff = BASE_BACKOFF_MS * Math.pow(2, attempt - 1);
+        const delay = addJitter(backoff);
+        process.stderr.write(
+          `[todoist-cli] Retry ${attempt}/${MAX_RETRIES} in ${Math.round(delay)}ms...\n`,
+        );
+        await sleep(delay);
+      }
+      skipNextBackoff = false;
+
+      // Set up per-request timeout via AbortController
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      const fetchInit: RequestInit = {
+        ...init,
+        signal: controller.signal,
+      };
+
+      let res: Response;
+      try {
+        res = await fetch(url, fetchInit);
+      } catch (err) {
+        clearTimeout(timeoutId);
+
+        if (isTimeoutError(err)) {
+          lastError = new Error(`Request timed out after 30s`);
+          continue; // retry on timeout
+        }
+
+        if (isNetworkError(err)) {
+          lastError = new Error(
+            "Network error: unable to reach Todoist API. Check your connection.",
+          );
+          continue; // retry on network error
+        }
+
+        throw err; // unknown error, don't retry
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      // Success — return response
+      if (res.ok) {
+        return res;
+      }
+
+      // 429 Rate Limit — retry with Retry-After header or rate-limit backoff
+      if (res.status === 429) {
+        const retryAfterHeader = res.headers.get("Retry-After");
+        let waitMs: number;
+
+        if (retryAfterHeader) {
+          const retryAfterSec = parseInt(retryAfterHeader, 10);
+          waitMs = (Number.isNaN(retryAfterSec) ? RATE_LIMIT_BASE_BACKOFF_MS / 1000 : retryAfterSec) * 1000;
+        } else {
+          waitMs = RATE_LIMIT_BASE_BACKOFF_MS * Math.pow(2, attempt);
+        }
+
+        lastRetryAfter = Math.ceil(waitMs / 1000);
+
+        if (attempt < MAX_RETRIES) {
+          const delay = addJitter(waitMs);
+          process.stderr.write(
+            `[todoist-cli] Rate limited (429). Retry ${attempt + 1}/${MAX_RETRIES} in ${Math.round(delay)}ms...\n`,
+          );
+          await sleep(delay);
+          skipNextBackoff = true; // already waited with rate-limit-specific delay
+          continue;
+        }
+
         throw new Error(
-          "Network error: could not reach Todoist API. Check your internet connection and try again.",
+          `Rate limit exceeded. Retried ${MAX_RETRIES} times. Try again in ${lastRetryAfter} seconds.`,
         );
       }
-      throw err;
+
+      // 5xx Server Error — retry
+      if (res.status >= 500) {
+        lastError = new Error(`API error ${res.status}: ${res.statusText}`);
+        continue;
+      }
+
+      // 4xx Client Error (non-429) — do NOT retry, return for throwError handling
+      return res;
     }
+
+    // All retries exhausted
+    throw lastError ?? new Error("Request failed after all retries.");
   }
 
   private async handleResponse<T>(res: Response): Promise<T> {

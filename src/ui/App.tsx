@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { render, Box, Text, useApp } from "ink";
 import type { Task, Project, Label, Section } from "../api/types.ts";
 import { getTasks } from "../api/tasks.ts";
@@ -6,17 +6,25 @@ import { getProjects } from "../api/projects.ts";
 import { getLabels } from "../api/labels.ts";
 import { getSections } from "../api/sections.ts";
 import { TasksView } from "./views/TasksView.tsx";
+import type { ListViewState } from "./views/TasksView.tsx";
 import { TaskDetailView } from "./views/TaskDetailView.tsx";
 import { StatsView } from "./views/StatsView.tsx";
 import { CompletedView } from "./views/CompletedView.tsx";
 import { ActivityView } from "./views/ActivityView.tsx";
+import { createHookRegistry } from "../plugins/hook-registry.ts";
+import { createViewRegistry } from "../plugins/view-registry.ts";
+import { createExtensionRegistry } from "../plugins/extension-registry.ts";
+import { createPaletteRegistry } from "../plugins/palette-registry.ts";
+import { loadPlugins } from "../plugins/loader.ts";
+import type { LoadedPlugins } from "../plugins/loader.ts";
 
 type View =
   | { type: "list" }
   | { type: "detail"; task: Task }
   | { type: "stats" }
   | { type: "completed" }
-  | { type: "activity" };
+  | { type: "activity" }
+  | { type: "plugin"; name: string };
 
 function App() {
   const { exit } = useApp();
@@ -28,6 +36,8 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<View>({ type: "list" });
   const [statusMessage, setStatusMessage] = useState("");
+  const [loadedPlugins, setLoadedPlugins] = useState<LoadedPlugins | null>(null);
+  const listStateRef = useRef<ListViewState | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -46,6 +56,18 @@ function App() {
           setLabels(l);
           setSections(s);
           setLoading(false);
+
+          // Load plugins
+          try {
+            const hooks = createHookRegistry();
+            const viewReg = createViewRegistry();
+            const extReg = createExtensionRegistry();
+            const palReg = createPaletteRegistry();
+            const lp = await loadPlugins(hooks, viewReg, extReg, palReg);
+            if (!cancelled) setLoadedPlugins(lp);
+          } catch {
+            // Plugin loading failure is non-fatal
+          }
         }
       } catch (err) {
         if (!cancelled) {
@@ -80,11 +102,17 @@ function App() {
       case "activity":
         setView({ type: "activity" });
         break;
-      default:
-        setView({ type: "list" });
+      default: {
+        const pluginViews = loadedPlugins?.views.getViews() ?? [];
+        if (pluginViews.some(v => v.name === viewName)) {
+          setView({ type: "plugin", name: viewName });
+        } else {
+          setView({ type: "list" });
+        }
         break;
+      }
     }
-  }, []);
+  }, [loadedPlugins]);
 
   const handleTaskChanged = useCallback(async (message?: string) => {
     if (message) setStatusMessage(message);
@@ -99,8 +127,11 @@ function App() {
 
   if (loading) {
     return (
-      <Box justifyContent="center" alignItems="center" width="100%" height="100%">
-        <Text color="cyan">Loading Todoist data...</Text>
+      <Box flexDirection="column" justifyContent="center" alignItems="center" width="100%" height="100%">
+        <Text bold color="cyan">Todoist CLI</Text>
+        <Box marginTop={1}>
+          <Text color="gray">Loading your tasks...</Text>
+        </Box>
       </Box>
     );
   }
@@ -123,6 +154,9 @@ function App() {
         labels={labels}
         onBack={handleBackToList}
         onTaskChanged={handleTaskChanged}
+        pluginSections={loadedPlugins?.extensions.getDetailSections()}
+        pluginSectionContextMap={loadedPlugins?.detailSectionContextMap}
+        pluginHooks={loadedPlugins?.hooks ?? null}
       />
     );
   }
@@ -139,18 +173,49 @@ function App() {
     return <ActivityView onBack={handleBackToList} />;
   }
 
+  if (view.type === "plugin" && loadedPlugins) {
+    const pluginView = loadedPlugins.views.getViews().find(v => v.name === view.name);
+    if (pluginView) {
+      const ctx = loadedPlugins.viewContextMap.get(view.name);
+      if (ctx) {
+        const Component = pluginView.component;
+        return (
+          <Component
+            onBack={handleBackToList}
+            onNavigate={handleNavigate}
+            ctx={ctx}
+            tasks={tasks}
+            projects={projects}
+            labels={labels}
+          />
+        );
+      }
+    }
+  }
+
   return (
     <TasksView
       tasks={tasks}
       projects={projects}
       labels={labels}
       onTasksChange={setTasks}
+      onProjectsChange={setProjects}
+      onLabelsChange={setLabels}
       onQuit={exit}
       onOpenTask={handleOpenTask}
       sections={sections}
       onNavigate={handleNavigate}
       initialStatus={statusMessage}
       onStatusClear={() => setStatusMessage("")}
+      savedStateRef={listStateRef}
+      pluginExtensions={loadedPlugins?.extensions ?? null}
+      pluginPalette={loadedPlugins?.palette ?? null}
+      pluginViews={loadedPlugins?.views ?? null}
+      pluginKeybindingContextMap={loadedPlugins?.keybindingContextMap}
+      pluginColumnContextMap={loadedPlugins?.columnContextMap}
+      pluginPaletteContextMap={loadedPlugins?.paletteContextMap}
+      pluginStatusBarContextMap={loadedPlugins?.statusBarContextMap}
+      pluginHooks={loadedPlugins?.hooks ?? null}
     />
   );
 }

@@ -3,19 +3,13 @@ import chalk from "chalk";
 import { getProjects, getProject, createProject, updateProject, deleteProject } from "../api/projects.ts";
 import { getSections } from "../api/sections.ts";
 import { getTasks } from "../api/tasks.ts";
-import { resolveProjectName } from "../utils/quick-add.ts";
 import { handleError } from "../utils/errors.ts";
 import { cliExit } from "../utils/exit.ts";
 import { ID_WIDTH } from "../utils/format.ts";
+import { saveLastList, resolveProjectArg } from "../utils/resolve.ts";
 
 const NAME_WIDTH = 30;
 const COLOR_WIDTH = 12;
-
-async function resolveProjectArg(value: string): Promise<string> {
-  const resolved = await resolveProjectName(value);
-  if (resolved) return resolved;
-  return value;
-}
 
 export function registerProjectCommand(program: Command): void {
   const project = program
@@ -54,17 +48,21 @@ export function registerProjectCommand(program: Command): void {
           return;
         }
 
-        const header = `${"ID".padEnd(ID_WIDTH)} ${"Name".padEnd(NAME_WIDTH)} ${"Color".padEnd(COLOR_WIDTH)} Favorite`;
+        const header = `${"#".padStart(3)} ${"ID".padEnd(ID_WIDTH)} ${"Name".padEnd(NAME_WIDTH)} ${"Color".padEnd(COLOR_WIDTH)} Favorite`;
         console.log(chalk.bold(header));
-        console.log(chalk.dim("-".repeat(ID_WIDTH + 1 + NAME_WIDTH + 1 + COLOR_WIDTH + 1 + 8)));
+        console.log(chalk.dim("-".repeat(3 + 1 + ID_WIDTH + 1 + NAME_WIDTH + 1 + COLOR_WIDTH + 1 + 8)));
 
-        for (const p of projects) {
+        for (let i = 0; i < projects.length; i++) {
+          const p = projects[i]!;
+          const num = chalk.dim(String(i + 1).padStart(3));
           const id = p.id.padEnd(ID_WIDTH);
           const name = (p.name.length > 28 ? p.name.slice(0, 27) + "..." : p.name).padEnd(NAME_WIDTH);
           const color = p.color.padEnd(COLOR_WIDTH);
           const fav = p.is_favorite ? chalk.yellow("*") : " ";
-          console.log(`${id} ${name} ${color} ${fav}`);
+          console.log(`${num} ${id} ${name} ${color} ${fav}`);
         }
+
+        saveLastList("project", projects.map(p => ({ id: p.id, label: p.name })));
       } catch (err) {
         handleError(err);
       }
@@ -116,10 +114,11 @@ export function registerProjectCommand(program: Command): void {
     .option("--parent <id>", "Parent project ID")
     .action(async (name: string, opts: { color?: string; parent?: string }) => {
       try {
+        const parentId = opts.parent ? await resolveProjectArg(opts.parent) : undefined;
         const result = await createProject({
           name,
           color: opts.color,
-          parent_id: opts.parent,
+          parent_id: parentId,
         });
         console.log(chalk.green(`Project created: ${result.name} (${result.id})`));
       } catch (err) {
@@ -161,8 +160,9 @@ export function registerProjectCommand(program: Command): void {
     .command("delete")
     .description("Delete a project")
     .argument("<id>", "Project ID")
-    .action(async (id: string) => {
+    .action(async (rawId: string) => {
       try {
+        const id = await resolveProjectArg(rawId);
         await deleteProject(id);
         console.log(chalk.green(`Project ${id} deleted.`));
       } catch (err) {

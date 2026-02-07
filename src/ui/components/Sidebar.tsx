@@ -1,8 +1,18 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import type { Project, Label, Section } from "../../api/types.ts";
 import { getSections } from "../../api/sections.ts";
 import { mapTodoistColor } from "../../utils/colors.ts";
+import type { PluginViewDefinition } from "../../plugins/types.ts";
+
+const SIDEBAR_ICONS: Record<string, string> = {
+  inbox: "\u25A3",
+  today: "\u25C9",
+  upcoming: "\u25B7",
+  "view-stats": "\u2261",
+  "view-completed": "\u2713",
+  "view-activity": "\u2302",
+};
 
 export interface SidebarItem {
   id: string;
@@ -22,6 +32,7 @@ interface SidebarProps {
   onSelect: (item: SidebarItem) => void;
   onIndexChange: (index: number) => void;
   onNavigate?: (view: string) => void;
+  pluginViews?: PluginViewDefinition[];
 }
 
 export function buildSidebarItems(
@@ -30,6 +41,7 @@ export function buildSidebarItems(
   tasks?: import("../../api/types.ts").Task[],
   sections?: Section[],
   activeProjectId?: string,
+  pluginViews?: PluginViewDefinition[],
 ): SidebarItem[] {
   const taskCountByProject = new Map<string, number>();
   const taskCountByLabel = new Map<string, number>();
@@ -55,7 +67,7 @@ export function buildSidebarItems(
   ];
 
   if (projects.length > 0) {
-    items.push({ id: "sep-projects", label: "--- Projects ---", type: "separator" });
+    items.push({ id: "sep-projects", label: "Projects", type: "separator" });
     for (const p of projects) {
       if (!p.is_inbox_project) {
         items.push({
@@ -86,7 +98,7 @@ export function buildSidebarItems(
   }
 
   if (labels.length > 0) {
-    items.push({ id: "sep-labels", label: "--- Labels ---", type: "separator" });
+    items.push({ id: "sep-labels", label: "Labels", type: "separator" });
     for (const l of labels) {
       items.push({
         id: l.id,
@@ -98,10 +110,23 @@ export function buildSidebarItems(
     }
   }
 
-  items.push({ id: "sep-views", label: "--- Views ---", type: "separator" });
+  items.push({ id: "sep-views", label: "Views", type: "separator" });
   items.push({ id: "view-stats", label: "Stats", type: "view", color: "cyan" });
   items.push({ id: "view-completed", label: "Completed", type: "view", color: "green" });
   items.push({ id: "view-activity", label: "Activity", type: "view", color: "yellow" });
+
+  const sidebarPluginViews = pluginViews?.filter(v => v.sidebar) ?? [];
+  if (sidebarPluginViews.length > 0) {
+    items.push({ id: "sep-plugins", label: "Plugins", type: "separator" });
+    for (const pv of sidebarPluginViews) {
+      items.push({
+        id: `plugin-${pv.name}`,
+        label: pv.label,
+        type: "view",
+        color: "magenta",
+      });
+    }
+  }
 
   return items;
 }
@@ -116,6 +141,7 @@ export function Sidebar({
   onSelect,
   onIndexChange,
   onNavigate,
+  pluginViews,
 }: SidebarProps) {
   const [sections, setSections] = useState<Section[]>([]);
   const { stdout } = useStdout();
@@ -140,7 +166,29 @@ export function Sidebar({
     };
   }, [activeProjectId]);
 
-  const items = buildSidebarItems(projects, labels, tasks, sections, activeProjectId);
+  const items = buildSidebarItems(projects, labels, tasks, sections, activeProjectId, pluginViews);
+
+  // Build icon map including plugin view icons
+  const iconMap = useMemo(() => {
+    const icons: Record<string, string> = { ...SIDEBAR_ICONS };
+    for (const pv of pluginViews ?? []) {
+      if (pv.sidebar?.icon) {
+        icons[`plugin-${pv.name}`] = pv.sidebar.icon;
+      }
+    }
+    return icons;
+  }, [pluginViews]);
+
+  // Compute adaptive sidebar width: clamp between 20 and 36
+  const sidebarWidth = useMemo(() => {
+    const lengths = items
+      .filter((item) => item.type !== "separator")
+      .map((item) => {
+        const countStr = item.taskCount != null ? ` (${item.taskCount})`.length : 0;
+        return item.label.length + countStr + 4; // 4 for prefix "> " and padding
+      });
+    return Math.min(38, Math.max(24, Math.max(...lengths, 24)));
+  }, [items]);
 
   useInput(
     (input, key) => {
@@ -157,7 +205,9 @@ export function Sidebar({
       } else if (key.return) {
         const item = items[selectedIndex];
         if (item && item.type === "view" && onNavigate) {
-          const viewName = item.id.replace("view-", "");
+          const viewName = item.id.startsWith("plugin-")
+            ? item.id.replace("plugin-", "")
+            : item.id.replace("view-", "");
           onNavigate(viewName);
         } else if (item && item.type !== "separator" && item.type !== "view") {
           onSelect(item);
@@ -169,7 +219,7 @@ export function Sidebar({
   return (
     <Box
       flexDirection="column"
-      width={24}
+      width={sidebarWidth}
       borderStyle="single"
       borderColor={isFocused ? "green" : "gray"}
       paddingX={1}
@@ -194,20 +244,26 @@ export function Sidebar({
           return visibleItems.map((item, vi) => {
             const i = scrollStart + vi;
             if (item.type === "separator") {
+              const isFirstSeparator = i === items.findIndex((it) => it.type === "separator");
               return (
-                <Text key={item.id} color="gray" dimColor>
-                  {item.label}
-                </Text>
+                <Box key={item.id} marginTop={isFirstSeparator ? 0 : 1} flexDirection="column">
+                  <Text color="gray" dimColor bold>
+                    {item.label.toUpperCase()}
+                  </Text>
+                </Box>
               );
             }
             const isSelected = i === selectedIndex && isFocused;
             const itemColor = isSelected ? "black" : item.color ?? (item.type === "builtin" ? "white" : "cyan");
             const countStr = item.taskCount != null ? ` (${item.taskCount})` : "";
             const prefix = i === selectedIndex ? "> " : "  ";
-            const maxLabelLen = 24 - 2 - prefix.length - countStr.length; // sidebar width - padding - prefix - count
-            const displayLabel = item.label.length > maxLabelLen && maxLabelLen > 3
-              ? item.label.slice(0, maxLabelLen - 1) + "\u2026"
-              : item.label;
+            const icon = iconMap[item.id];
+            const iconPrefix = icon ? `${icon} ` : "";
+            const fullLabel = `${iconPrefix}${item.label}`;
+            const maxLabelLen = sidebarWidth - 2 - prefix.length - countStr.length;
+            const displayLabel = fullLabel.length > maxLabelLen && maxLabelLen > 3
+              ? fullLabel.slice(0, maxLabelLen - 1) + "\u2026"
+              : fullLabel;
             return (
               <Text
                 key={item.id}

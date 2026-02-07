@@ -3,6 +3,7 @@ import chalk from "chalk";
 import { getComments, createComment, updateComment, deleteComment } from "../api/comments.ts";
 import { handleError } from "../utils/errors.ts";
 import { ID_WIDTH } from "../utils/format.ts";
+import { resolveTaskArg } from "../utils/resolve.ts";
 
 const POSTED_WIDTH = 22;
 
@@ -16,8 +17,9 @@ export function registerCommentCommand(program: Command): void {
     .description("Add a comment to a task")
     .argument("<task-id>", "Task ID")
     .argument("<text>", "Comment text")
-    .action(async (taskId: string, text: string) => {
+    .action(async (rawTaskId: string, text: string) => {
       try {
+        const taskId = await resolveTaskArg(rawTaskId);
         const result = await createComment({ task_id: taskId, content: text });
         console.log(chalk.green(`Comment added (${result.id})`));
       } catch (err) {
@@ -29,8 +31,9 @@ export function registerCommentCommand(program: Command): void {
     .command("list")
     .description("List comments for a task")
     .argument("<task-id>", "Task ID")
-    .action(async (taskId: string) => {
+    .action(async (rawTaskId: string) => {
       try {
+        const taskId = await resolveTaskArg(rawTaskId);
         const comments = await getComments(taskId);
         if (comments.length === 0) {
           console.log(chalk.dim("No comments found."));

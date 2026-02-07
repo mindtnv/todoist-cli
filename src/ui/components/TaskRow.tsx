@@ -1,60 +1,74 @@
+import React from "react";
 import { Box, Text } from "ink";
 import type { Task } from "../../api/types.ts";
+import type { TaskColumnDefinition, PluginContext } from "../../plugins/types.ts";
+import { formatRelativeDue, formatDeadlineShort, isDeadlineUrgent } from "../../utils/date-format.ts";
 
 interface TaskRowProps {
   task: Task;
   isSelected: boolean;
   isMarked?: boolean;
   depth?: number;
+  searchQuery?: string;
+  pluginColumns?: TaskColumnDefinition[];
+  pluginColumnContextMap?: Map<string, PluginContext>;
 }
 
-const priorityColors: Record<number, string> = {
-  4: "red",
-  3: "yellow",
-  2: "blue",
-  1: "white",
+function highlightMatch(text: string, query: string): React.ReactNode {
+  if (!query) return text;
+  const lowerText = text.toLowerCase();
+  const lowerQuery = query.toLowerCase();
+  const idx = lowerText.indexOf(lowerQuery);
+  if (idx === -1) return text;
+  const before = text.slice(0, idx);
+  const match = text.slice(idx, idx + query.length);
+  const after = text.slice(idx + query.length);
+  return (
+    <>
+      {before ? <Text>{before}</Text> : null}
+      <Text backgroundColor="yellow" color="black">{match}</Text>
+      {after ? <Text>{after}</Text> : null}
+    </>
+  );
+}
+
+const priorityConfig: Record<number, { dot: string; color: string }> = {
+  4: { dot: "\u25CF", color: "red" },
+  3: { dot: "\u25CF", color: "yellow" },
+  2: { dot: "\u25CF", color: "blue" },
+  1: { dot: "\u25CB", color: "gray" },
 };
 
-function formatDeadlineShort(dateStr: string): string {
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const parts = dateStr.split("-").map(Number);
-  const m = parts[1] ?? 1;
-  const d = parts[2] ?? 1;
-  return `${months[m - 1]} ${d}`;
-}
-
-function isDeadlineUrgent(dateStr: string): boolean {
-  const today = new Date();
-  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-  const deadline = new Date(dateStr + "T00:00:00");
-  const now = new Date(todayStr + "T00:00:00");
-  const diffDays = (deadline.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
-  return diffDays <= 3;
-}
-
-export function TaskRow({ task, isSelected, isMarked = false, depth = 0 }: TaskRowProps) {
+export function TaskRow({ task, isSelected, isMarked = false, depth = 0, searchQuery, pluginColumns, pluginColumnContextMap }: TaskRowProps) {
   const checkbox = task.is_completed ? "\u2611" : "\u2610";
-  const prioColor = priorityColors[task.priority] ?? "white";
-  const dueText = task.due ? task.due.date : "";
+  const prio = priorityConfig[task.priority] ?? { dot: "\u25CB", color: "gray" };
+  const dueInfo = task.due ? formatRelativeDue(task.due.date) : null;
+  const dueText = dueInfo ? dueInfo.text : "";
+  const dueColor = dueInfo ? dueInfo.color : "cyan";
   const recurringIndicator = task.due?.is_recurring ? " \u21BB" : "";
   const labelText = task.labels.length > 0 ? task.labels.map((l) => `@${l}`).join(" ") : "";
   const marker = isMarked ? "\u25cf " : "  ";
   const indent = depth > 0 ? "  ".repeat(depth) + "\u2514 " : "";
   const deadlineText = task.deadline ? formatDeadlineShort(task.deadline.date) : "";
   const deadlineUrgent = task.deadline ? isDeadlineUrgent(task.deadline.date) : false;
+  const commentCount = task.comment_count ?? 0;
+  const commentText = commentCount > 0 ? `\u2709 ${commentCount}` : "";
 
   // Truncate content to fit terminal width
   const termWidth = process.stdout.columns ?? 80;
   const markerWidth = 2; // "* " or "  "
   const indentWidth = indent.length;
-  const checkboxPrioWidth = 5; // "X pN "
-  const dueWidth = dueText ? dueText.length + 3 : 0; // " [date]"
+  const checkboxPrioWidth = 4; // "X D " (checkbox + space + dot + space)
+  const dueWidth = dueText ? dueText.length + 3 : 0; // " [text]"
   const recurringWidth = recurringIndicator ? 2 : 0;
   const deadlineWidth = deadlineText ? deadlineText.length + 3 : 0; // " F date"
   const labelWidth = labelText ? labelText.length + 1 : 0;
-  const sidebarWidth = 26; // sidebar + border
+  const commentWidth = commentText ? commentText.length + 1 : 0;
+  // Sidebar width is dynamic (24-38), estimate from terminal width
+  const sidebarWidth = Math.min(38, Math.max(24, Math.floor(termWidth * 0.25)));
   const borderPadding = 4; // task list borders/padding
-  const overhead = sidebarWidth + borderPadding + markerWidth + indentWidth + checkboxPrioWidth + dueWidth + recurringWidth + deadlineWidth + labelWidth + 1;
+  const pluginColumnsWidth = pluginColumns?.reduce((w, c) => w + (c.width ?? 8) + 1, 0) ?? 0;
+  const overhead = sidebarWidth + borderPadding + markerWidth + indentWidth + checkboxPrioWidth + dueWidth + recurringWidth + deadlineWidth + labelWidth + commentWidth + pluginColumnsWidth + 1;
   const maxContent = Math.max(10, termWidth - overhead);
   const content = task.content.length > maxContent ? task.content.slice(0, maxContent - 1) + "\u2026" : task.content;
 
@@ -66,13 +80,24 @@ export function TaskRow({ task, isSelected, isMarked = false, depth = 0 }: TaskR
       >
         <Text color={isMarked ? "yellow" : "gray"}>{marker}</Text>
         {indent ? <Text color="gray" dimColor>{indent}</Text> : null}
-        <Text color={prioColor}>{checkbox} p{task.priority}</Text>
+        <Text>{checkbox} </Text>
+        <Text color={prio.color}>{prio.dot}</Text>
         {" "}
-        <Text>{content}</Text>
-        {dueText ? <Text color="cyan">{` [${dueText}]`}</Text> : null}
+        <Text strikethrough={task.is_completed}>{searchQuery ? highlightMatch(content, searchQuery) : content}</Text>
+        {dueText ? <Text color={dueColor}>{` [${dueText}]`}</Text> : null}
         {recurringIndicator ? <Text color="cyan">{recurringIndicator}</Text> : null}
         {deadlineText ? <Text color={deadlineUrgent ? "red" : "magenta"} bold={deadlineUrgent}>{` \u2691 ${deadlineText}`}</Text> : null}
         {labelText ? <Text color="magenta">{` ${labelText}`}</Text> : null}
+        {commentText ? <Text color="gray">{` ${commentText}`}</Text> : null}
+        {pluginColumns?.map(col => {
+          const colCtx = pluginColumnContextMap?.get(col.id);
+          if (!colCtx) return null;
+          const rawText = col.render(task, colCtx) ?? "";
+          const colWidth = col.width ?? 8;
+          const fixedText = rawText.length > colWidth ? rawText.slice(0, colWidth - 1) + "\u2026" : rawText.padEnd(colWidth);
+          const textColor = col.color?.(task) ?? "dim";
+          return <Text key={col.id} color={textColor}>{` ${fixedText}`}</Text>;
+        })}
         {" "}
       </Text>
     </Box>

@@ -2,7 +2,7 @@ import type { Command } from "commander";
 import chalk from "chalk";
 import { getFilters, saveFilter, removeFilter } from "../config/index.ts";
 import { getTasks } from "../api/tasks.ts";
-import { printTaskTable } from "./task.ts";
+import { printTaskTable } from "./commands/task/index.ts";
 import { handleError } from "../utils/errors.ts";
 import { cliExit } from "../utils/exit.ts";
 

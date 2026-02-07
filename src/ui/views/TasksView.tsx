@@ -1,28 +1,32 @@
 import React from "react";
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
-import { Box, Text, useInput } from "ink";
-import type { Task, Project, Label, Section, CreateTaskParams } from "../../api/types.ts";
+import { Box, Text } from "ink";
+import type { Task, Project, Label, Section } from "../../api/types.ts";
 import { Sidebar } from "../components/Sidebar.tsx";
 import type { SidebarItem } from "../components/Sidebar.tsx";
 import { TaskList } from "../components/TaskList.tsx";
-import { InputPrompt } from "../components/InputPrompt.tsx";
-import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
-import { HelpOverlay } from "../components/HelpOverlay.tsx";
-import { SortMenu } from "../components/SortMenu.tsx";
 import type { SortField } from "../components/SortMenu.tsx";
-import { CommandPalette } from "../components/CommandPalette.tsx";
 import type { Command } from "../components/CommandPalette.tsx";
-import { createTask, closeTask, deleteTask, updateTask, reopenTask } from "../../api/tasks.ts";
-import { getTasks } from "../../api/tasks.ts";
-import { parseQuickAdd, resolveProjectName } from "../../utils/quick-add.ts";
+import { sortTasks } from "../../utils/sorting.ts";
+import { getTasks, createTask } from "../../api/tasks.ts";
+import { parseQuickAdd } from "../../utils/quick-add.ts";
 import { openUrl } from "../../utils/open-url.ts";
-import { ProjectPicker } from "../components/ProjectPicker.tsx";
-import { LabelPicker } from "../components/LabelPicker.tsx";
-import { EditTaskModal } from "../components/EditTaskModal.tsx";
-import type { UpdateTaskParams } from "../../api/types.ts";
+import { getTemplates } from "../../config/index.ts";
+import { createProject } from "../../api/projects.ts";
+import { createLabel } from "../../api/labels.ts";
+import { getProjects } from "../../api/projects.ts";
+import { getLabels } from "../../api/labels.ts";
+import { Breadcrumb } from "../components/Breadcrumb.tsx";
+import { ModalManager } from "../components/ModalManager.tsx";
+import type { Modal } from "../components/ModalManager.tsx";
+import type { ExtensionRegistry, PaletteRegistry, ViewRegistry, PluginContext, HookRegistry } from "../../plugins/types.ts";
+import { StatusBar } from "../components/StatusBar.tsx";
+import { useStatusMessage } from "../hooks/useStatusMessage.ts";
+import { useUndoSystem } from "../hooks/useUndoSystem.ts";
+import { useTaskOperations } from "../hooks/useTaskOperations.ts";
+import { useKeyboardHandler } from "../hooks/useKeyboardHandler.ts";
 
 type Panel = "sidebar" | "tasks";
-type Modal = "none" | "add" | "addSubtask" | "edit" | "delete" | "filter" | "search" | "help" | "sort" | "bulkDelete" | "command" | "due" | "deadline" | "move" | "label" | "editFull" | "createFull";
 
 const PRIORITY_COLORS: Record<number, string> = {
   1: "white",
@@ -38,89 +42,96 @@ const PRIORITY_NAMES: Record<number, string> = {
   4: "Urgent",
 };
 
+export interface ListViewState {
+  taskIndex: number;
+  sidebarIndex: number;
+  activePanel: Panel;
+  filterView: string;
+  filterProjectId?: string;
+  filterSectionId?: string;
+  filterLabel?: string;
+  sortField: SortField;
+  sortDirection: "asc" | "desc";
+  searchQuery: string;
+}
+
 interface TasksViewProps {
   tasks: Task[];
   projects: Project[];
   labels: Label[];
   sections?: Section[];
   onTasksChange: (tasks: Task[]) => void;
+  onProjectsChange?: (projects: Project[]) => void;
+  onLabelsChange?: (labels: Label[]) => void;
   onQuit: () => void;
   onOpenTask?: (task: Task) => void;
   onNavigate?: (view: string) => void;
   initialStatus?: string;
   onStatusClear?: () => void;
+  savedStateRef?: React.RefObject<ListViewState | null>;
+  pluginExtensions?: ExtensionRegistry | null;
+  pluginPalette?: PaletteRegistry | null;
+  pluginViews?: ViewRegistry | null;
+  pluginKeybindingContextMap?: Map<string, PluginContext>;
+  pluginColumnContextMap?: Map<string, PluginContext>;
+  pluginPaletteContextMap?: Map<string, PluginContext>;
+  pluginStatusBarContextMap?: Map<string, PluginContext>;
+  pluginHooks?: HookRegistry | null;
 }
 
 const sortLabels: Record<SortField, string> = {
   priority: "Priority",
   due: "Due date",
+  date: "Due date",
   name: "Name",
+  content: "Name",
   project: "Project",
 };
 
-function sortTasks(tasks: Task[], field: SortField, direction: "asc" | "desc" = "asc"): Task[] {
-  const sorted = [...tasks];
-  sorted.sort((a, b) => {
-    switch (field) {
-      case "priority":
-        return b.priority - a.priority;
-      case "due": {
-        const aDate = a.due?.date ?? "9999-99-99";
-        const bDate = b.due?.date ?? "9999-99-99";
-        return aDate.localeCompare(bDate);
-      }
-      case "name":
-        return a.content.localeCompare(b.content);
-      case "project":
-        return a.project_id.localeCompare(b.project_id);
-    }
-  });
-  if (direction === "desc") sorted.reverse();
-  return sorted;
-}
-
-export function TasksView({ tasks, projects, labels, sections, onTasksChange, onQuit, onOpenTask, onNavigate, initialStatus, onStatusClear }: TasksViewProps) {
-  const [activePanel, setActivePanel] = useState<Panel>("tasks");
-  const [taskIndex, setTaskIndex] = useState(0);
-  const [sidebarIndex, setSidebarIndex] = useState(0);
+export function TasksView({ tasks, projects, labels, sections, onTasksChange, onProjectsChange, onLabelsChange, onQuit, onOpenTask, onNavigate, initialStatus, onStatusClear, savedStateRef, pluginExtensions, pluginPalette, pluginViews, pluginKeybindingContextMap, pluginColumnContextMap, pluginPaletteContextMap, pluginStatusBarContextMap, pluginHooks }: TasksViewProps) {
+  const saved = savedStateRef?.current;
+  const [activePanel, setActivePanel] = useState<Panel>(saved?.activePanel ?? "tasks");
+  const [taskIndex, setTaskIndex] = useState(saved?.taskIndex ?? 0);
+  const [sidebarIndex, setSidebarIndex] = useState(saved?.sidebarIndex ?? 0);
   const [modal, setModal] = useState<Modal>("none");
-  const [filterLabel, setFilterLabel] = useState<string | undefined>();
-  const [filterProjectId, setFilterProjectId] = useState<string | undefined>();
-  const [filterView, setFilterView] = useState("Inbox");
-  const [statusMessage, setStatusMessage] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [filterLabel, setFilterLabel] = useState<string | undefined>(saved?.filterLabel);
+  const [filterProjectId, setFilterProjectId] = useState<string | undefined>(saved?.filterProjectId);
+  const [filterSectionId, setFilterSectionId] = useState<string | undefined>(saved?.filterSectionId);
+  const [filterView, setFilterView] = useState(saved?.filterView ?? "Inbox");
+  const [searchQuery, setSearchQuery] = useState(saved?.searchQuery ?? "");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [sortField, setSortField] = useState<SortField>("priority");
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  const [sortField, setSortField] = useState<SortField>(saved?.sortField ?? "priority");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">(saved?.sortDirection ?? "asc");
   const [rangeSelectAnchor, setRangeSelectAnchor] = useState<number | null>(null);
   const [apiFilteredTasks, setApiFilteredTasks] = useState<Task[] | null>(null);
-  const [lastAction, setLastAction] = useState<{
-    type: "complete" | "delete" | "move" | "priority";
-    taskIds: string[];
-    previousState?: Partial<Task>[];
-    timer: ReturnType<typeof setTimeout>;
-  } | null>(null);
-  const [undoCountdown, setUndoCountdown] = useState(0);
-  const lastActionRef = useRef(lastAction);
-  useEffect(() => { lastActionRef.current = lastAction; }, [lastAction]);
+  const modalRef = useRef(modal);
+  useEffect(() => { modalRef.current = modal; }, [modal]);
   const [pendingQuit, setPendingQuit] = useState(false);
   const pendingQuitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [pendingPluginInput, setPendingPluginInput] = useState<{
+    label: string;
+    placeholder?: string;
+    formatPreview?: (value: string) => string;
+    execute: (input: string) => void;
+  } | null>(null);
 
-  // Pick up status from parent (e.g. after detail view action)
+  // Persist navigational state to ref so it survives view switches
   useEffect(() => {
-    if (initialStatus) {
-      setStatusMessage(initialStatus);
-      onStatusClear?.();
+    if (savedStateRef) {
+      savedStateRef.current = {
+        taskIndex, sidebarIndex, activePanel, filterView,
+        filterProjectId, filterSectionId, filterLabel,
+        sortField, sortDirection, searchQuery,
+      };
     }
-  }, [initialStatus, onStatusClear]);
+  }, [taskIndex, sidebarIndex, activePanel, filterView, filterProjectId, filterSectionId, filterLabel, sortField, sortDirection, searchQuery, savedStateRef]);
 
-  // Auto-clear status message after 3 seconds
-  useEffect(() => {
-    if (!statusMessage) return;
-    const timer = setTimeout(() => setStatusMessage(""), 3000);
-    return () => clearTimeout(timer);
-  }, [statusMessage]);
+  const { message: statusMessage, show: showStatus } = useStatusMessage({
+    initialMessage: initialStatus,
+    autoClearMs: 3000,
+    onInitialClear: onStatusClear,
+  });
 
   const baseTasks = useMemo(() => {
     if (filterView.startsWith("Filter: ") && apiFilteredTasks !== null) {
@@ -129,6 +140,7 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
     const today = new Date();
     const localDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
     return tasks.filter((t) => {
+      if (filterSectionId && filterProjectId) return t.project_id === filterProjectId && t.section_id === filterSectionId;
       if (filterProjectId) return t.project_id === filterProjectId;
       if (filterLabel) return t.labels.includes(filterLabel);
       if (filterView === "Today") {
@@ -142,7 +154,7 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
       if (inboxProject) return t.project_id === inboxProject.id;
       return true;
     });
-  }, [tasks, filterProjectId, filterLabel, filterView, projects, apiFilteredTasks]);
+  }, [tasks, filterProjectId, filterSectionId, filterLabel, filterView, projects, apiFilteredTasks]);
 
   const filteredTasks = useMemo(() => {
     let result = baseTasks;
@@ -157,6 +169,29 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
     return sortTasks(result, sortField, sortDirection);
   }, [baseTasks, searchQuery, sortField, sortDirection]);
 
+  const breadcrumbSegments = useMemo(() => {
+    const segments: Array<{ label: string; color?: string }> = [
+      { label: "Todoist", color: "green" },
+    ];
+    if (filterProjectId) {
+      segments.push({ label: "Projects", color: "gray" });
+      segments.push({ label: projects.find((p) => p.id === filterProjectId)?.name ?? "Project", color: "cyan" });
+      if (filterSectionId && sections) {
+        const section = sections.find((s) => s.id === filterSectionId);
+        if (section) {
+          segments.push({ label: section.name, color: "cyan" });
+        }
+      }
+    } else if (filterLabel) {
+      segments.push({ label: `@${filterLabel}`, color: "magenta" });
+    } else if (filterView.startsWith("Filter: ")) {
+      segments.push({ label: filterView, color: "yellow" });
+    } else {
+      segments.push({ label: filterView || "Inbox" });
+    }
+    return segments;
+  }, [filterProjectId, filterSectionId, filterLabel, filterView, projects, sections]);
+
   const selectedTask = filteredTasks[taskIndex];
 
   const refreshTasks = useCallback(async () => {
@@ -165,89 +200,56 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
       const newTasks = await getTasks();
       onTasksChange(newTasks);
     } catch {
-      setStatusMessage("Failed to refresh tasks");
+      showStatus("Failed to refresh tasks");
     } finally {
       setIsLoading(false);
     }
-  }, [onTasksChange]);
+  }, [onTasksChange, showStatus]);
 
-  // Undo countdown timer
-  useEffect(() => {
-    if (!lastAction) {
-      setUndoCountdown(0);
-      return;
-    }
-    setUndoCountdown(10);
-    const interval = setInterval(() => {
-      setUndoCountdown((c) => {
-        if (c <= 1) {
-          clearInterval(interval);
-          return 0;
-        }
-        return c - 1;
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [lastAction]);
+  const { lastAction, lastActionRef, undoCountdown, startUndoTimer, handleUndo, clearUndo, lastRedo, redoCountdown, handleRedo } = useUndoSystem({
+    tasks,
+    onTasksChange,
+    showStatus,
+    refreshTasks,
+  });
 
-  const startUndoTimer = useCallback(
-    (action: { type: "complete" | "delete" | "move" | "priority"; taskIds: string[]; previousState?: Partial<Task>[] }) => {
-      if (lastAction) clearTimeout(lastAction.timer);
-      const timer = setTimeout(() => setLastAction(null), 10000);
-      setLastAction({ ...action, timer });
-    },
-    [lastAction],
-  );
-
-  const handleUndo = useCallback(async () => {
-    if (!lastAction) return;
-    clearTimeout(lastAction.timer);
-    try {
-      if (lastAction.type === "complete") {
-        setStatusMessage("Reopening task...");
-        await Promise.all(lastAction.taskIds.map((id) => reopenTask(id)));
-        setStatusMessage("Task reopened!");
-        refreshTasks().catch(() => {});
-      } else if (lastAction.type === "delete" && lastAction.previousState) {
-        setStatusMessage("Recreating task...");
-        for (const state of lastAction.previousState) {
-          await createTask({
-            content: state.content ?? "Untitled",
-            description: state.description,
-            priority: state.priority,
-            due_string: state.due?.string,
-            labels: state.labels,
-            project_id: state.project_id,
-          } as CreateTaskParams);
-        }
-        setStatusMessage("Task recreated!");
-        refreshTasks().catch(() => {});
-      } else if (lastAction.type === "priority" && lastAction.previousState) {
-        // Optimistic: revert priority locally
-        const revertMap = new Map(lastAction.taskIds.map((id, i) => [id, lastAction.previousState![i]?.priority]));
-        onTasksChange(tasks.map((t) => (revertMap.has(t.id) ? { ...t, priority: revertMap.get(t.id) ?? t.priority } : t)));
-        setStatusMessage("Priority reverted!");
-        Promise.all(
-          lastAction.taskIds.map((id, i) =>
-            updateTask(id, { priority: lastAction.previousState![i]?.priority })
-          ),
-        ).then(() => refreshTasks().catch(() => {})).catch(() => setStatusMessage("Undo failed"));
-      } else if (lastAction.type === "move" && lastAction.previousState) {
-        // Optimistic: revert project locally
-        const revertMap = new Map(lastAction.taskIds.map((id, i) => [id, lastAction.previousState![i]?.project_id]));
-        onTasksChange(tasks.map((t) => (revertMap.has(t.id) ? { ...t, project_id: revertMap.get(t.id) ?? t.project_id } : t)));
-        setStatusMessage("Move reverted!");
-        Promise.all(
-          lastAction.taskIds.map((id, i) =>
-            updateTask(id, { project_id: lastAction.previousState![i]?.project_id })
-          ),
-        ).then(() => refreshTasks().catch(() => {})).catch(() => setStatusMessage("Undo failed"));
-      }
-    } catch {
-      setStatusMessage("Undo failed");
-    }
-    setLastAction(null);
-  }, [lastAction, tasks, onTasksChange, refreshTasks]);
+  const {
+    handleCompleteTask,
+    handleDeleteConfirm,
+    handleEditTask,
+    handleRenameTask,
+    handleBulkComplete,
+    handleBulkDeleteConfirm,
+    handleSetPriority,
+    handleSetDueDate,
+    handleSetDeadline,
+    handleAddTask,
+    handleCreateTaskFull,
+    handleAddSubtask,
+    handleMoveToProject,
+    handleLabelsSave,
+    handleEditTaskFull,
+    handleDuplicateTask,
+  } = useTaskOperations({
+    tasks,
+    onTasksChange,
+    showStatus,
+    startUndoTimer,
+    clearUndo,
+    lastActionRef,
+    refreshTasks,
+    selectedTask,
+    selectedIds,
+    setSelectedIds,
+    setRangeSelectAnchor,
+    setTaskIndex,
+    setModal: setModal as React.Dispatch<React.SetStateAction<string>>,
+    filteredTasksLength: filteredTasks.length,
+    filterProjectId,
+    filterView,
+    projects,
+    pluginHooks,
+  });
 
   const handleSidebarSelect = useCallback(
     (item: SidebarItem) => {
@@ -256,62 +258,29 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
       if (item.type === "builtin") {
         setFilterProjectId(undefined);
         setFilterLabel(undefined);
+        setFilterSectionId(undefined);
         setFilterView(item.label);
       } else if (item.type === "project") {
         setFilterLabel(undefined);
+        setFilterSectionId(undefined);
         setFilterView("");
         setFilterProjectId(item.id);
       } else if (item.type === "label") {
         setFilterProjectId(undefined);
+        setFilterSectionId(undefined);
         setFilterView("");
         const labelObj = labels.find((l) => l.id === item.id);
         setFilterLabel(labelObj?.name);
+      } else if (item.type === "section") {
+        const sectionId = item.id.replace("section-", "");
+        setFilterLabel(undefined);
+        setFilterView("");
+        setFilterSectionId(sectionId);
+        // Keep the current filterProjectId
       }
       setActivePanel("tasks");
     },
     [labels],
-  );
-
-  const handleAddTask = useCallback(
-    async (input: string) => {
-      try {
-        const parsed = parseQuickAdd(input);
-        const params: CreateTaskParams = { content: parsed.content };
-        if (parsed.priority) params.priority = parsed.priority;
-        if (parsed.due_string) {
-          params.due_string = parsed.due_string;
-        } else if (filterView === "Today") {
-          params.due_string = "today";
-        }
-        if (parsed.labels.length > 0) params.labels = parsed.labels;
-        if (parsed.project_name) {
-          const resolvedId = await resolveProjectName(parsed.project_name);
-          if (resolvedId) params.project_id = resolvedId;
-        } else if (filterProjectId) {
-          params.project_id = filterProjectId;
-        }
-        await createTask(params);
-        setStatusMessage("Task created! Keep typing or Esc to close");
-        refreshTasks().catch(() => {});
-      } catch {
-        setStatusMessage("Failed to create task");
-      }
-    },
-    [refreshTasks, filterProjectId, filterView],
-  );
-
-  const handleCreateTaskFull = useCallback(
-    async (params: CreateTaskParams) => {
-      setModal("none");
-      try {
-        await createTask(params);
-        setStatusMessage("Task created!");
-        refreshTasks().catch(() => {});
-      } catch {
-        setStatusMessage("Failed to create task");
-      }
-    },
-    [refreshTasks],
   );
 
   const renderQuickAddPreview = useCallback((value: string): React.ReactNode => {
@@ -358,140 +327,11 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
     );
   }, [filterProjectId, projects]);
 
-  const handleCompleteTask = useCallback(async () => {
-    if (!selectedTask) return;
-    const taskId = selectedTask.id;
-    const prevTasks = [...tasks];
-    // Optimistic: remove task from list instantly
-    onTasksChange(tasks.filter((t) => t.id !== taskId));
-    setTaskIndex((i) => Math.min(i, Math.max(filteredTasks.length - 2, 0)));
-    startUndoTimer({ type: "complete", taskIds: [taskId] });
-    setStatusMessage("Task completed! Press u to undo (10s)");
-    try {
-      await closeTask(taskId);
-      refreshTasks().catch(() => {});
-    } catch {
-      onTasksChange(prevTasks);
-      if (lastActionRef.current) clearTimeout(lastActionRef.current.timer);
-      setLastAction(null);
-      setStatusMessage("Failed to complete task");
-    }
-  }, [selectedTask, tasks, onTasksChange, filteredTasks.length, startUndoTimer, refreshTasks]);
-
-  const handleDeleteConfirm = useCallback(async () => {
-    if (!selectedTask) return;
-    setModal("none");
-    const taskId = selectedTask.id;
-    const snapshot: Partial<Task> = {
-      content: selectedTask.content,
-      description: selectedTask.description,
-      priority: selectedTask.priority,
-      due: selectedTask.due,
-      labels: selectedTask.labels,
-      project_id: selectedTask.project_id,
-    };
-    const prevTasks = [...tasks];
-    // Optimistic: remove task from list instantly
-    onTasksChange(tasks.filter((t) => t.id !== taskId));
-    setTaskIndex((i) => Math.min(i, Math.max(filteredTasks.length - 2, 0)));
-    startUndoTimer({ type: "delete", taskIds: [taskId], previousState: [snapshot] });
-    setStatusMessage("Task deleted! Press u to undo (10s)");
-    try {
-      await deleteTask(taskId);
-      refreshTasks().catch(() => {});
-    } catch {
-      onTasksChange(prevTasks);
-      if (lastActionRef.current) clearTimeout(lastActionRef.current.timer);
-      setLastAction(null);
-      setStatusMessage("Failed to delete task");
-    }
-  }, [selectedTask, tasks, onTasksChange, filteredTasks.length, startUndoTimer, refreshTasks]);
-
-  const handleEditTask = useCallback(
-    async (newContent: string) => {
-      if (!selectedTask) return;
-      setModal("none");
-      const taskId = selectedTask.id;
-      const prevTasks = [...tasks];
-      // Optimistic: update content instantly
-      onTasksChange(tasks.map((t) => (t.id === taskId ? { ...t, content: newContent } : t)));
-      setStatusMessage("Task updated!");
-      try {
-        await updateTask(taskId, { content: newContent });
-        refreshTasks().catch(() => {});
-      } catch {
-        onTasksChange(prevTasks);
-        setStatusMessage("Failed to update task");
-      }
-    },
-    [selectedTask, tasks, onTasksChange, refreshTasks],
-  );
-
-  const handleBulkComplete = useCallback(async () => {
-    if (selectedIds.size === 0) return;
-    const ids = Array.from(selectedIds);
-    const count = ids.length;
-    const prevTasks = [...tasks];
-    const idsSet = new Set(ids);
-    // Optimistic: remove all selected tasks instantly
-    onTasksChange(tasks.filter((t) => !idsSet.has(t.id)));
-    startUndoTimer({ type: "complete", taskIds: ids });
-    setSelectedIds(new Set());
-    setRangeSelectAnchor(null);
-    setTaskIndex(0);
-    setStatusMessage(`${count} tasks completed! Press u to undo (10s)`);
-    try {
-      await Promise.all(ids.map((id) => closeTask(id)));
-      refreshTasks().catch(() => {});
-    } catch {
-      onTasksChange(prevTasks);
-      if (lastActionRef.current) clearTimeout(lastActionRef.current.timer);
-      setLastAction(null);
-      setStatusMessage("Failed to complete some tasks");
-    }
-  }, [selectedIds, tasks, onTasksChange, startUndoTimer, refreshTasks]);
-
-  const handleBulkDeleteConfirm = useCallback(async () => {
-    if (selectedIds.size === 0) return;
-    setModal("none");
-    const ids = Array.from(selectedIds);
-    const count = ids.length;
-    const snapshots = ids.map((id) => {
-      const t = tasks.find((task) => task.id === id);
-      return {
-        content: t?.content ?? "Untitled",
-        description: t?.description,
-        priority: t?.priority,
-        due: t?.due,
-        labels: t?.labels,
-        project_id: t?.project_id,
-      } as Partial<Task>;
-    });
-    const prevTasks = [...tasks];
-    const idsSet = new Set(ids);
-    // Optimistic: remove all selected tasks instantly
-    onTasksChange(tasks.filter((t) => !idsSet.has(t.id)));
-    startUndoTimer({ type: "delete", taskIds: ids, previousState: snapshots });
-    setSelectedIds(new Set());
-    setRangeSelectAnchor(null);
-    setTaskIndex(0);
-    setStatusMessage(`${count} tasks deleted! Press u to undo (10s)`);
-    try {
-      await Promise.all(ids.map((id) => deleteTask(id)));
-      refreshTasks().catch(() => {});
-    } catch {
-      onTasksChange(prevTasks);
-      if (lastActionRef.current) clearTimeout(lastActionRef.current.timer);
-      setLastAction(null);
-      setStatusMessage("Failed to delete some tasks");
-    }
-  }, [selectedIds, tasks, onTasksChange, startUndoTimer, refreshTasks]);
-
   const handleFilterInput = useCallback(
     async (query: string) => {
       setModal("none");
       try {
-        setStatusMessage(`Filtering: ${query}`);
+        showStatus(`Filtering: ${query}`);
         const filtered = await getTasks({ filter: query });
         setApiFilteredTasks(filtered);
         setFilterView(`Filter: ${query}`);
@@ -499,7 +339,7 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
         setFilterLabel(undefined);
         setTaskIndex(0);
       } catch {
-        setStatusMessage("Invalid filter");
+        showStatus("Invalid filter");
       }
     },
     [],
@@ -517,219 +357,77 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
     setModal("none");
   }, []);
 
-  const handleSetPriority = useCallback(
-    async (priority: 1 | 2 | 3 | 4) => {
-      const targetIds = selectedIds.size > 0 ? Array.from(selectedIds) : selectedTask ? [selectedTask.id] : [];
-      if (targetIds.length === 0) return;
-      const previousState = targetIds.map((id) => {
-        const t = tasks.find((task) => task.id === id);
-        return { priority: t?.priority, id };
-      });
-      const prevTasks = [...tasks];
-      const targetSet = new Set(targetIds);
-      // Optimistic: update priority instantly
-      onTasksChange(tasks.map((t) => (targetSet.has(t.id) ? { ...t, priority } : t)));
-      startUndoTimer({ type: "priority", taskIds: targetIds, previousState });
-      if (selectedIds.size > 0) {
-        setSelectedIds(new Set());
-        setRangeSelectAnchor(null);
-      }
-      setStatusMessage(`Priority set to p${priority}. Press u to undo (10s)`);
-      try {
-        await Promise.all(targetIds.map((id) => updateTask(id, { priority })));
-        refreshTasks().catch(() => {});
-      } catch {
-        onTasksChange(prevTasks);
-        if (lastActionRef.current) clearTimeout(lastActionRef.current.timer);
-        setLastAction(null);
-        setStatusMessage("Failed to set priority");
-      }
-    },
-    [selectedIds, selectedTask, tasks, onTasksChange, startUndoTimer, refreshTasks],
-  );
-
-  const handleSetDueDate = useCallback(
-    async (dueString: string) => {
-      setModal("none");
-      const targetIds = selectedIds.size > 0 ? Array.from(selectedIds) : selectedTask ? [selectedTask.id] : [];
-      if (targetIds.length === 0) return;
-      const isRemove = dueString.toLowerCase() === "none" || dueString.toLowerCase() === "clear";
-      const prevTasks = [...tasks];
-      const targetSet = new Set(targetIds);
-      // Optimistic: update due field instantly
-      onTasksChange(tasks.map((t) => {
-        if (!targetSet.has(t.id)) return t;
-        if (isRemove) return { ...t, due: null };
-        return { ...t, due: { ...t.due, date: t.due?.date ?? "", string: dueString, is_recurring: false } as Task["due"] };
-      }));
-      if (selectedIds.size > 0) {
-        setSelectedIds(new Set());
-        setRangeSelectAnchor(null);
-      }
-      setStatusMessage(isRemove ? "Due date removed!" : `Due date set to "${dueString}"!`);
-      try {
-        if (isRemove) {
-          await Promise.all(targetIds.map((id) => updateTask(id, { due_string: "no date" })));
-        } else {
-          await Promise.all(targetIds.map((id) => updateTask(id, { due_string: dueString })));
-        }
-        // Refresh to get proper parsed due date from API
-        refreshTasks().catch(() => {});
-      } catch {
-        onTasksChange(prevTasks);
-        setStatusMessage("Failed to set due date");
-      }
-    },
-    [selectedIds, selectedTask, tasks, onTasksChange, refreshTasks],
-  );
-
-  const handleSetDeadline = useCallback(
-    async (value: string) => {
-      setModal("none");
-      const targetIds = selectedIds.size > 0 ? Array.from(selectedIds) : selectedTask ? [selectedTask.id] : [];
-      if (targetIds.length === 0) return;
-      const isRemove = value.toLowerCase() === "none" || value.toLowerCase() === "clear" || value === "";
-      if (!isRemove && !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-        setStatusMessage("Invalid date format. Use YYYY-MM-DD.");
-        return;
-      }
-      const prevTasks = [...tasks];
-      const targetSet = new Set(targetIds);
-      // Optimistic: update deadline field instantly
-      onTasksChange(tasks.map((t) => {
-        if (!targetSet.has(t.id)) return t;
-        return { ...t, deadline: isRemove ? null : { date: value } };
-      }));
-      if (selectedIds.size > 0) {
-        setSelectedIds(new Set());
-        setRangeSelectAnchor(null);
-      }
-      setStatusMessage(isRemove ? "Deadline removed!" : `Deadline set to ${value}!`);
-      try {
-        await Promise.all(targetIds.map((id) => updateTask(id, { deadline_date: isRemove ? null : value } as any)));
-        refreshTasks().catch(() => {});
-      } catch {
-        onTasksChange(prevTasks);
-        setStatusMessage("Failed to set deadline");
-      }
-    },
-    [selectedIds, selectedTask, tasks, onTasksChange, refreshTasks],
-  );
-
-  const handleAddSubtask = useCallback(
-    async (input: string) => {
-      setModal("none");
-      if (!selectedTask) return;
-      try {
-        const parsed = parseQuickAdd(input);
-        const params: CreateTaskParams = {
-          content: parsed.content,
-          parent_id: selectedTask.id,
-        };
-        if (parsed.priority) params.priority = parsed.priority;
-        if (parsed.due_string) params.due_string = parsed.due_string;
-        if (parsed.labels.length > 0) params.labels = parsed.labels;
-        await createTask(params);
-        setStatusMessage("Subtask created!");
-        refreshTasks().catch(() => {});
-      } catch {
-        setStatusMessage("Failed to create subtask");
-      }
-    },
-    [selectedTask, refreshTasks],
-  );
-
-  const handleMoveToProject = useCallback(
-    async (projectId: string) => {
-      setModal("none");
-      const targetIds = selectedIds.size > 0 ? Array.from(selectedIds) : selectedTask ? [selectedTask.id] : [];
-      if (targetIds.length === 0) return;
-      const previousState = targetIds.map((id) => {
-        const t = tasks.find((task) => task.id === id);
-        return { project_id: t?.project_id };
-      });
-      const projectName = projects.find((p) => p.id === projectId)?.name ?? "project";
-      const prevTasks = [...tasks];
-      const targetSet = new Set(targetIds);
-      // Optimistic: update project_id instantly
-      onTasksChange(tasks.map((t) => (targetSet.has(t.id) ? { ...t, project_id: projectId } : t)));
-      startUndoTimer({ type: "move", taskIds: targetIds, previousState });
-      if (selectedIds.size > 0) {
-        setSelectedIds(new Set());
-        setRangeSelectAnchor(null);
-      }
-      setStatusMessage(`Moved to ${projectName}! Press u to undo (10s)`);
-      try {
-        await Promise.all(targetIds.map((id) => updateTask(id, { project_id: projectId })));
-        refreshTasks().catch(() => {});
-      } catch {
-        onTasksChange(prevTasks);
-        if (lastActionRef.current) clearTimeout(lastActionRef.current.timer);
-        setLastAction(null);
-        setStatusMessage("Failed to move task");
-      }
-    },
-    [selectedIds, selectedTask, tasks, projects, onTasksChange, startUndoTimer, refreshTasks],
-  );
-
-  const handleLabelsSave = useCallback(
-    async (newLabels: string[]) => {
-      setModal("none");
-      if (!selectedTask) return;
-      const taskId = selectedTask.id;
-      const prevTasks = [...tasks];
-      // Optimistic: update labels instantly
-      onTasksChange(tasks.map((t) => (t.id === taskId ? { ...t, labels: newLabels } : t)));
-      setStatusMessage("Labels updated!");
-      try {
-        await updateTask(taskId, { labels: newLabels });
-        refreshTasks().catch(() => {});
-      } catch {
-        onTasksChange(prevTasks);
-        setStatusMessage("Failed to update labels");
-      }
-    },
-    [selectedTask, tasks, onTasksChange, refreshTasks],
-  );
-
-  const handleEditTaskFull = useCallback(
-    async (params: UpdateTaskParams) => {
-      if (!selectedTask) return;
-      setModal("none");
-      const taskId = selectedTask.id;
-      const prevTasks = [...tasks];
-      // Optimistic: apply all changed fields instantly
-      onTasksChange(tasks.map((t) => {
-        if (t.id !== taskId) return t;
-        const updated = { ...t };
-        if (params.content !== undefined) updated.content = params.content;
-        if (params.description !== undefined) updated.description = params.description;
-        if (params.priority !== undefined) updated.priority = params.priority;
-        if (params.labels !== undefined) updated.labels = params.labels;
-        if (params.project_id !== undefined) updated.project_id = params.project_id;
-        return updated;
-      }));
-      setStatusMessage("Task updated!");
-      try {
-        await updateTask(taskId, params);
-        refreshTasks().catch(() => {});
-      } catch {
-        onTasksChange(prevTasks);
-        setStatusMessage("Failed to update task");
-      }
-    },
-    [selectedTask, tasks, onTasksChange, refreshTasks],
-  );
-
   const handleOpenInBrowser = useCallback(() => {
     if (!selectedTask) return;
     try {
       openUrl(selectedTask.url);
-      setStatusMessage("Opened in browser");
+      showStatus("Opened in browser");
     } catch {
-      setStatusMessage("Failed to open in browser");
+      showStatus("Failed to open in browser");
     }
   }, [selectedTask]);
+
+  const handleCopyUrl = useCallback(() => {
+    if (!selectedTask) return;
+    try {
+      const { execSync } = require("child_process");
+      const url = selectedTask.url;
+      try {
+        execSync("pbcopy", { input: url, stdio: ["pipe", "ignore", "ignore"] });
+      } catch {
+        try {
+          execSync("xclip -selection clipboard", { input: url, stdio: ["pipe", "ignore", "ignore"] });
+        } catch {
+          process.stdout.write(`\x1b]52;c;${Buffer.from(url).toString("base64")}\x07`);
+        }
+      }
+      showStatus("URL copied to clipboard!");
+    } catch {
+      showStatus("Failed to copy URL");
+    }
+  }, [selectedTask]);
+
+  const handleCreateProject = useCallback(async (name: string) => {
+    setModal("none");
+    try {
+      await createProject({ name });
+      showStatus(`Project created: ${name}`);
+      // Refresh projects list
+      try {
+        const newProjects = await getProjects();
+        onProjectsChange?.(newProjects);
+      } catch {
+        // non-critical
+      }
+    } catch {
+      showStatus("Failed to create project");
+    }
+  }, [showStatus, onProjectsChange]);
+
+  const handleCreateLabel = useCallback(async (name: string) => {
+    setModal("none");
+    try {
+      await createLabel({ name });
+      showStatus(`Label created: ${name}`);
+      // Refresh labels list
+      try {
+        const newLabels = await getLabels();
+        onLabelsChange?.(newLabels);
+      } catch {
+        // non-critical
+      }
+    } catch {
+      showStatus("Failed to create label");
+    }
+  }, [showStatus, onLabelsChange]);
+
+  const handlePluginInput = useCallback((value: string) => {
+    setModal("none");
+    if (pendingPluginInput) {
+      pendingPluginInput.execute(value);
+      setPendingPluginInput(null);
+    }
+  }, [pendingPluginInput]);
 
   const handleSortSelect = useCallback((field: SortField) => {
     if (field === sortField) {
@@ -765,7 +463,7 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
           return next;
         });
       }
-      setStatusMessage("Range select started. Move cursor then press v again.");
+      showStatus("Range select started. Move cursor then press v again.");
       return;
     }
     // Range select end: select everything between anchor and current
@@ -780,54 +478,56 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
       return next;
     });
     setRangeSelectAnchor(null);
-    setStatusMessage(`${end - start + 1} tasks selected`);
+    showStatus(`${end - start + 1} tasks selected`);
   }, [rangeSelectAnchor, taskIndex, filteredTasks, selectedTask]);
 
   // Build command palette commands
   const commands = useMemo((): Command[] => {
     const cmds: Command[] = [
-      { name: "add", description: "Add a new task", action: () => setModal("add") },
-      { name: "search", description: "Search tasks", action: () => setModal("search") },
-      { name: "filter", description: "API filter query", action: () => setModal("filter") },
-      { name: "sort", description: "Change sort order", action: () => setModal("sort") },
-      { name: "refresh", description: "Refresh task list", action: () => { refreshTasks(); setStatusMessage("Refreshing..."); setModal("none"); } },
-      { name: "help", description: "Show keyboard shortcuts", action: () => setModal("help") },
-      { name: "quit", description: "Exit application", action: () => { setModal("none"); onQuit(); } },
+      { name: "add", description: "Add a new task", shortcut: "a", action: () => setModal("add"), category: "task" },
+      { name: "search", description: "Search tasks", shortcut: "/", action: () => setModal("search"), category: "navigation" },
+      { name: "filter", description: "API filter query", shortcut: "f", action: () => setModal("filter"), category: "navigation" },
+      { name: "sort", description: "Change sort order", shortcut: "s", action: () => setModal("sort"), category: "navigation" },
+      { name: "refresh", description: "Refresh task list", shortcut: "r", action: () => { refreshTasks(); showStatus("Refreshing..."); setModal("none"); }, category: "general" },
+      { name: "help", description: "Show keyboard shortcuts", shortcut: "?", action: () => setModal("help"), category: "general" },
+      { name: "quit", description: "Exit application", shortcut: "q", action: () => { setModal("none"); onQuit(); }, category: "general" },
     ];
     if (selectedTask) {
       cmds.push(
-        { name: "edit", description: `Edit "${selectedTask.content}"`, action: () => { setModal("editFull"); } },
-        { name: "complete", description: `Complete "${selectedTask.content}"`, action: () => { setModal("none"); handleCompleteTask(); } },
-        { name: "delete", description: `Delete "${selectedTask.content}"`, action: () => { setModal("none"); setModal("delete"); } },
-        { name: "open", description: `Open "${selectedTask.content}" detail`, action: () => { setModal("none"); onOpenTask?.(selectedTask); } },
-        { name: "due", description: `Set due date for "${selectedTask.content}"`, action: () => { setModal("due"); } },
-        { name: "deadline", description: `Set deadline for "${selectedTask.content}"`, action: () => { setModal("deadline"); } },
-        { name: "move", description: `Move "${selectedTask.content}" to project`, action: () => { setModal("move"); } },
-        { name: "labels", description: `Edit labels for "${selectedTask.content}"`, action: () => { setModal("label"); } },
-        { name: "subtask", description: `Add subtask to "${selectedTask.content}"`, action: () => { setModal("addSubtask"); } },
-        { name: "browser", description: `Open "${selectedTask.content}" in browser`, action: () => { setModal("none"); handleOpenInBrowser(); } },
+        { name: "edit", description: `Edit "${selectedTask.content}"`, shortcut: "e", action: () => { setModal("editFull"); }, category: "task" },
+        { name: "rename", description: `Rename "${selectedTask.content}"`, shortcut: "R", action: () => { setModal("rename"); }, category: "task" },
+        { name: "complete", description: `Complete "${selectedTask.content}"`, shortcut: "c", action: () => { setModal("none"); handleCompleteTask(); }, category: "task" },
+        { name: "delete", description: `Delete "${selectedTask.content}"`, shortcut: "d", action: () => { setModal("none"); setModal("delete"); }, category: "task" },
+        { name: "open", description: `Open "${selectedTask.content}" detail`, shortcut: "Enter", action: () => { setModal("none"); onOpenTask?.(selectedTask); }, category: "task" },
+        { name: "due", description: `Set due date for "${selectedTask.content}"`, shortcut: "t", action: () => { setModal("due"); }, category: "task" },
+        { name: "deadline", description: `Set deadline for "${selectedTask.content}"`, shortcut: "D", action: () => { setModal("deadline"); }, category: "task" },
+        { name: "move", description: `Move "${selectedTask.content}" to project`, shortcut: "m", action: () => { setModal("move"); }, category: "task" },
+        { name: "labels", description: `Edit labels for "${selectedTask.content}"`, shortcut: "l", action: () => { setModal("label"); }, category: "task" },
+        { name: "subtask", description: `Add subtask to "${selectedTask.content}"`, shortcut: "S", action: () => { setModal("addSubtask"); }, category: "task" },
+        { name: "browser", description: `Open "${selectedTask.content}" in browser`, shortcut: "y", action: () => { setModal("none"); handleOpenInBrowser(); }, category: "task" },
       );
     }
     if (selectedIds.size > 0) {
       cmds.push(
-        { name: "complete-selected", description: `Complete ${selectedIds.size} selected tasks`, action: () => { setModal("none"); handleBulkComplete(); } },
-        { name: "delete-selected", description: `Delete ${selectedIds.size} selected tasks`, action: () => { setModal("none"); setModal("bulkDelete"); } },
-        { name: "clear-selection", description: "Clear all selections", action: () => { setSelectedIds(new Set()); setRangeSelectAnchor(null); setModal("none"); } },
+        { name: "complete-selected", description: `Complete ${selectedIds.size} selected tasks`, action: () => { setModal("none"); handleBulkComplete(); }, category: "bulk" },
+        { name: "delete-selected", description: `Delete ${selectedIds.size} selected tasks`, action: () => { setModal("none"); setModal("bulkDelete"); }, category: "bulk" },
+        { name: "labels-selected", description: `Edit labels for ${selectedIds.size} selected tasks`, action: () => { setModal("label"); }, category: "bulk" },
+        { name: "clear-selection", description: "Clear all selections", action: () => { setSelectedIds(new Set()); setRangeSelectAnchor(null); setModal("none"); }, category: "bulk" },
       );
     }
     // View commands
     cmds.push(
-      { name: "inbox", description: "Show Inbox", action: () => { setFilterProjectId(undefined); setFilterLabel(undefined); setFilterView("Inbox"); setTaskIndex(0); setModal("none"); } },
-      { name: "today", description: "Show Today", action: () => { setFilterProjectId(undefined); setFilterLabel(undefined); setFilterView("Today"); setTaskIndex(0); setModal("none"); } },
-      { name: "upcoming", description: "Show Upcoming", action: () => { setFilterProjectId(undefined); setFilterLabel(undefined); setFilterView("Upcoming"); setTaskIndex(0); setModal("none"); } },
+      { name: "inbox", description: "Show Inbox", action: () => { setFilterProjectId(undefined); setFilterLabel(undefined); setFilterSectionId(undefined); setFilterView("Inbox"); setTaskIndex(0); setModal("none"); }, category: "view" },
+      { name: "today", description: "Show Today", action: () => { setFilterProjectId(undefined); setFilterLabel(undefined); setFilterSectionId(undefined); setFilterView("Today"); setTaskIndex(0); setModal("none"); }, category: "view" },
+      { name: "upcoming", description: "Show Upcoming", action: () => { setFilterProjectId(undefined); setFilterLabel(undefined); setFilterSectionId(undefined); setFilterView("Upcoming"); setTaskIndex(0); setModal("none"); }, category: "view" },
     );
     // Dashboard views
     if (onNavigate) {
       cmds.push(
-        { name: "stats", description: "Productivity stats dashboard", action: () => { setModal("none"); onNavigate("stats"); } },
-        { name: "completed", description: "View completed tasks", action: () => { setModal("none"); onNavigate("completed"); } },
-        { name: "activity", description: "Activity log", action: () => { setModal("none"); onNavigate("activity"); } },
-        { name: "log", description: "Activity log (alias)", action: () => { setModal("none"); onNavigate("activity"); } },
+        { name: "stats", description: "Productivity stats dashboard", action: () => { setModal("none"); onNavigate("stats"); }, category: "view" },
+        { name: "completed", description: "View completed tasks", action: () => { setModal("none"); onNavigate("completed"); }, category: "view" },
+        { name: "activity", description: "Activity log", action: () => { setModal("none"); onNavigate("activity"); }, category: "view" },
+        { name: "log", description: "Activity log (alias)", action: () => { setModal("none"); onNavigate("activity"); }, category: "view" },
       );
     }
     // Project commands
@@ -837,185 +537,151 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
           name: `project:${p.name}`,
           description: `Switch to project ${p.name}`,
           action: () => { setFilterLabel(undefined); setFilterView(""); setFilterProjectId(p.id); setTaskIndex(0); setModal("none"); },
+          category: "project",
+        });
+      }
+    }
+    // Template commands
+    try {
+      const templates = getTemplates();
+      for (const template of templates) {
+        cmds.push({
+          name: `template:${template.name}`,
+          description: `Apply template: ${template.name}`,
+          category: "template",
+          action: async () => {
+            setModal("none");
+            try {
+              await createTask({
+                content: template.content,
+                description: template.description,
+                priority: template.priority,
+                labels: template.labels,
+                due_string: template.due_string,
+                project_id: filterProjectId,
+              });
+              showStatus(`Task created from template "${template.name}"`);
+              refreshTasks().catch(() => {});
+            } catch {
+              showStatus(`Failed to apply template "${template.name}"`);
+            }
+          },
+        });
+      }
+    } catch {
+      // Template loading failure is non-critical
+    }
+    // Create project command
+    cmds.push({
+      name: "create-project",
+      description: "Create a new project",
+      category: "project",
+      action: () => {
+        setModal("createProject" as Modal);
+      },
+    });
+    // Create label command
+    cmds.push({
+      name: "create-label",
+      description: "Create a new label",
+      category: "general",
+      action: () => {
+        setModal("createLabel" as Modal);
+      },
+    });
+    // Plugin palette commands
+    if (pluginPalette) {
+      for (const cmd of pluginPalette.getCommands()) {
+        cmds.push({
+          name: cmd.label.toLowerCase().replace(/\s+/g, "-"),
+          description: cmd.label,
+          category: cmd.category,
+          shortcut: cmd.shortcut,
+          action: () => {
+            const ctx = pluginPaletteContextMap?.get(cmd.label);
+            if (!ctx) { setModal("none"); return; }
+            if (cmd.inputPrompt) {
+              // Command needs user input — show input modal
+              setModal("none");
+              setPendingPluginInput({
+                label: cmd.inputPrompt.label,
+                placeholder: cmd.inputPrompt.placeholder,
+                formatPreview: cmd.inputPrompt.formatPreview,
+                execute: (input: string) => {
+                  const result = cmd.action(ctx, selectedTask ?? null, onNavigate ?? (() => {}), input);
+                  if (result instanceof Promise) {
+                    result.catch(() => showStatus(`Failed: ${cmd.label}`));
+                  }
+                },
+              });
+              setTimeout(() => setModal("pluginInput"), 0);
+            } else {
+              setModal("none");
+              const result = cmd.action(ctx, selectedTask ?? null, onNavigate ?? (() => {}));
+              if (result instanceof Promise) {
+                result.catch(() => showStatus(`Failed: ${cmd.label}`));
+              }
+            }
+          },
         });
       }
     }
     return cmds;
-  }, [selectedTask, selectedIds, projects, refreshTasks, onQuit, onOpenTask, onNavigate, handleCompleteTask, handleBulkComplete]);
+  }, [selectedTask, selectedIds, projects, refreshTasks, onQuit, onOpenTask, onNavigate, handleCompleteTask, handleBulkComplete, pluginPalette, pluginPaletteContextMap, showStatus, setPendingPluginInput]);
 
-  useInput((input, key) => {
-    if (modal === "search" || modal === "command") {
-      // Input handled by respective components
-      return;
-    }
-    if (modal !== "none") return;
-
-    if (key.tab) {
-      setActivePanel((p) => (p === "sidebar" ? "tasks" : "sidebar"));
-      return;
-    }
-    if (input === "q") {
-      if (selectedIds.size > 0 && !pendingQuit) {
-        setPendingQuit(true);
-        setStatusMessage("Press q again to quit (selections will be lost)");
-        if (pendingQuitTimerRef.current) clearTimeout(pendingQuitTimerRef.current);
-        pendingQuitTimerRef.current = setTimeout(() => setPendingQuit(false), 2000);
-        return;
-      }
-      if (pendingQuitTimerRef.current) clearTimeout(pendingQuitTimerRef.current);
-      onQuit();
-      return;
-    }
-    if (activePanel === "tasks") {
-      // Reset pending quit on any non-q key
-      if (input !== "q" && pendingQuit) {
-        setPendingQuit(false);
-        if (pendingQuitTimerRef.current) clearTimeout(pendingQuitTimerRef.current);
-      }
-      if (key.escape) {
-        if (rangeSelectAnchor !== null) {
-          setRangeSelectAnchor(null);
-          setStatusMessage("");
-          return;
-        }
-        if (selectedIds.size > 0) {
-          setSelectedIds(new Set());
-          setStatusMessage("");
-          return;
-        }
-        if (searchQuery) {
-          setSearchQuery("");
-          setStatusMessage("");
-          return;
-        }
-        if (apiFilteredTasks !== null) {
-          setApiFilteredTasks(null);
-          setFilterView("Inbox");
-          setTaskIndex(0);
-          setStatusMessage("");
-          return;
-        }
-        return;
-      }
-      // Ctrl-a: select all visible tasks
-      if (key.ctrl && input === "a") {
-        const allIds = new Set(filteredTasks.map((t) => t.id));
-        setSelectedIds(allIds);
-        setStatusMessage(`${allIds.size} tasks selected`);
-        return;
-      }
-      // Ctrl-n: clear all selection
-      if (key.ctrl && input === "n") {
-        setSelectedIds(new Set());
-        setRangeSelectAnchor(null);
-        setStatusMessage("");
-        return;
-      }
-      if (input === " ") {
-        toggleSelection();
-        return;
-      }
-      if (input === "v") {
-        handleRangeSelect();
-        return;
-      }
-      if (key.return && selectedTask && onOpenTask) {
-        onOpenTask(selectedTask);
-        return;
-      }
-      // Priority keys 1-4
-      if (input === "1" || input === "2" || input === "3" || input === "4") {
-        handleSetPriority(Number(input) as 1 | 2 | 3 | 4);
-        return;
-      }
-      // Undo
-      if (input === "u") {
-        handleUndo();
-        return;
-      }
-      if (input === "a") {
-        setModal("add");
-      } else if (input === "N") {
-        setModal("createFull");
-      } else if (input === "A") {
-        if (selectedTask) {
-          setModal("addSubtask");
-        }
-      } else if (input === "c") {
-        if (selectedIds.size > 0) {
-          handleBulkComplete();
-        } else if (selectedTask) {
-          handleCompleteTask();
-        }
-      } else if (input === "d") {
-        if (selectedIds.size > 0) {
-          setModal("bulkDelete");
-        } else if (selectedTask) {
-          setModal("delete");
-        }
-      } else if (input === "D") {
-        if (selectedTask || selectedIds.size > 0) {
-          setModal("deadline");
-        }
-      } else if (input === "t") {
-        if (selectedTask || selectedIds.size > 0) {
-          setModal("due");
-        }
-      } else if (input === "m") {
-        if (selectedTask || selectedIds.size > 0) {
-          setModal("move");
-        }
-      } else if (input === "l") {
-        if (selectedTask) {
-          setModal("label");
-        }
-      } else if (input === "o") {
-        handleOpenInBrowser();
-      } else if (input === "/") {
-        setModal("search");
-      } else if (input === "f") {
-        setModal("filter");
-      } else if (input === "s") {
-        setModal("sort");
-      } else if (input === "?") {
-        setModal("help");
-      } else if (input === ":") {
-        setModal("command");
-      } else if (input === "e") {
-        if (selectedTask) {
-          setModal("editFull");
-        }
-      } else if (input === "r") {
-        refreshTasks();
-        setStatusMessage("Refreshing...");
-      } else if (input === "!") {
-        setFilterProjectId(undefined);
-        setFilterLabel(undefined);
-        setFilterView("Inbox");
-        setApiFilteredTasks(null);
-        setTaskIndex(0);
-      } else if (input === "@") {
-        setFilterProjectId(undefined);
-        setFilterLabel(undefined);
-        setFilterView("Today");
-        setApiFilteredTasks(null);
-        setTaskIndex(0);
-      } else if (input === "#") {
-        setFilterProjectId(undefined);
-        setFilterLabel(undefined);
-        setFilterView("Upcoming");
-        setApiFilteredTasks(null);
-        setTaskIndex(0);
-      }
-    }
+  useKeyboardHandler({
+    modal,
+    activePanel,
+    setActivePanel,
+    setModal,
+    selectedTask,
+    selectedIds,
+    setSelectedIds,
+    filteredTasks,
+    taskIndex,
+    rangeSelectAnchor,
+    setRangeSelectAnchor,
+    searchQuery,
+    setSearchQuery,
+    apiFilteredTasks,
+    setApiFilteredTasks,
+    setFilterProjectId,
+    setFilterSectionId,
+    setFilterLabel,
+    setFilterView,
+    setTaskIndex,
+    pendingQuit,
+    setPendingQuit,
+    pendingQuitTimerRef,
+    showStatus,
+    onQuit,
+    onOpenTask,
+    refreshTasks,
+    handleCompleteTask,
+    handleBulkComplete,
+    handleSetPriority,
+    handleUndo,
+    handleRedo,
+    handleDuplicateTask,
+    handleOpenInBrowser,
+    handleCopyUrl,
+    toggleSelection,
+    handleRangeSelect,
+    pluginExtensions,
+    pluginKeybindingContextMap,
   });
 
-  const currentViewLabel =
-    filterProjectId
-      ? projects.find((p) => p.id === filterProjectId)?.name ?? "Project"
-      : filterLabel
-        ? `@${filterLabel}`
-        : filterView;
+  // Auto-refresh every 60 seconds when idle
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (modalRef.current === "none" && !lastActionRef.current) {
+        getTasks()
+          .then((newTasks) => onTasksChange(newTasks))
+          .catch(() => {});
+      }
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [onTasksChange]);
 
   const hasSelection = selectedIds.size > 0;
   const isSearching = modal === "search" || searchQuery !== "";
@@ -1030,24 +696,26 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
           tasks={tasks}
           activeProjectId={filterProjectId}
           selectedIndex={sidebarIndex}
-          isFocused={activePanel === "sidebar"}
+          isFocused={activePanel === "sidebar" && modal === "none"}
           onSelect={handleSidebarSelect}
           onIndexChange={setSidebarIndex}
           onNavigate={onNavigate ? (viewName: string) => {
             onNavigate(viewName);
           } : undefined}
+          pluginViews={pluginViews?.getViews()}
         />
         <Box flexDirection="column" flexGrow={1}>
           <Box paddingX={1} justifyContent="space-between">
             <Box>
-              <Text bold color="white">{currentViewLabel}</Text>
+              <Breadcrumb segments={breadcrumbSegments} />
               <Text color="gray">{` | Sort: ${sortLabels[sortField]} ${sortDirection === "asc" ? "\u2191" : "\u2193"}`}</Text>
             </Box>
-            {searchQuery && (
-              <Text color="cyan">
-                Search: "{searchQuery}" ({filteredTasks.length} of {baseTasks.length} tasks)
-              </Text>
-            )}
+            <Box>
+              {searchQuery && (
+                <Text color="cyan">{`Search: "${searchQuery}" (${filteredTasks.length})`} </Text>
+              )}
+              <Text color="gray" dimColor>{filteredTasks.length} tasks</Text>
+            </Box>
           </Box>
           {filteredTasks.length === 0 && apiFilteredTasks !== null ? (
             <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor={activePanel === "tasks" ? "blue" : "gray"} paddingX={1} justifyContent="center" alignItems="center">
@@ -1057,139 +725,60 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
             <TaskList
               tasks={filteredTasks}
               selectedIndex={taskIndex}
-              isFocused={activePanel === "tasks"}
+              isFocused={activePanel === "tasks" && modal === "none"}
               onIndexChange={setTaskIndex}
               selectedIds={selectedIds}
+              sortField={sortField}
+              searchQuery={searchQuery}
+              pluginColumns={pluginExtensions?.getTaskColumns()}
+              pluginColumnContextMap={pluginColumnContextMap}
             />
           )}
         </Box>
       </Box>
 
-      {modal === "add" && (
-        <InputPrompt
-          prompt="New task"
-          placeholder="Buy milk tomorrow #Shopping p1 @errands"
-          onSubmit={handleAddTask}
-          onCancel={() => setModal("none")}
-          onCtrlE={() => setModal("createFull")}
-          onPreview={renderQuickAddPreview}
-          footer={
-            <Text color="gray" dimColor>
-              [Enter] create & continue  [Ctrl-E] full editor  [Esc] close
-            </Text>
-          }
-        />
-      )}
-      {modal === "createFull" && (
-        <EditTaskModal
-          projects={projects}
-          labels={labels}
-          onSave={() => {}}
-          onCreate={handleCreateTaskFull}
-          onCancel={() => setModal("none")}
-          defaultProjectId={filterProjectId}
-          defaultDue={filterView === "Today" ? "today" : undefined}
-        />
-      )}
-      {modal === "addSubtask" && selectedTask && (
-        <InputPrompt
-          prompt={`Subtask of "${selectedTask.content}"`}
-          onSubmit={handleAddSubtask}
-          onCancel={() => setModal("none")}
-        />
-      )}
-      {modal === "edit" && selectedTask && (
-        <InputPrompt
-          prompt="Edit task"
-          defaultValue={selectedTask.content}
-          onSubmit={handleEditTask}
-          onCancel={() => setModal("none")}
-        />
-      )}
-      {modal === "editFull" && selectedTask && (
-        <EditTaskModal
-          task={selectedTask}
-          projects={projects}
-          labels={labels}
-          onSave={handleEditTaskFull}
-          onCancel={() => setModal("none")}
-        />
-      )}
-      {modal === "due" && (
-        <InputPrompt
-          prompt="Due date"
-          onSubmit={handleSetDueDate}
-          onCancel={() => setModal("none")}
-        />
-      )}
-      {modal === "deadline" && (
-        <InputPrompt
-          prompt="Deadline (YYYY-MM-DD)"
-          onSubmit={handleSetDeadline}
-          onCancel={() => setModal("none")}
-        />
-      )}
-      {modal === "move" && (
-        <ProjectPicker
-          projects={projects}
-          onSelect={handleMoveToProject}
-          onCancel={() => setModal("none")}
-        />
-      )}
-      {modal === "label" && selectedTask && (
-        <LabelPicker
-          labels={labels}
-          currentLabels={selectedTask.labels}
-          onSave={handleLabelsSave}
-          onCancel={() => setModal("none")}
-        />
-      )}
-      {modal === "delete" && selectedTask && (
-        <ConfirmDialog
-          message={`Delete "${selectedTask.content}"?`}
-          onConfirm={handleDeleteConfirm}
-          onCancel={() => setModal("none")}
-        />
-      )}
-      {modal === "bulkDelete" && (
-        <ConfirmDialog
-          message={`Delete ${selectedIds.size} selected tasks?`}
-          onConfirm={handleBulkDeleteConfirm}
-          onCancel={() => setModal("none")}
-        />
-      )}
-      {modal === "filter" && (
-        <InputPrompt
-          prompt="Filter"
-          onSubmit={handleFilterInput}
-          onCancel={() => setModal("none")}
-        />
-      )}
-      {modal === "search" && (
-        <InputPrompt
-          prompt="Search"
-          defaultValue={searchQuery}
-          onSubmit={(val) => {
-            setSearchQuery(val);
-            handleSearchSubmit(val);
-          }}
-          onCancel={handleSearchCancel}
-        />
-      )}
-      {modal === "help" && (
-        <HelpOverlay onClose={() => setModal("none")} />
-      )}
-      {modal === "sort" && (
-        <SortMenu
-          currentSort={sortField}
-          onSelect={handleSortSelect}
-          onCancel={() => setModal("none")}
-        />
-      )}
-      {modal === "command" && (
-        <CommandPalette
-          commands={commands}
-          onCancel={() => setModal("none")}
+      <ModalManager
+        modal={modal}
+        setModal={setModal}
+        selectedTask={selectedTask}
+        selectedIds={selectedIds}
+        projects={projects}
+        labels={labels}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        sortField={sortField}
+        sortDirection={sortDirection}
+        filterProjectId={filterProjectId}
+        filterView={filterView}
+        commands={commands}
+        pluginExtensions={pluginExtensions}
+        handleAddTask={handleAddTask}
+        handleCreateTaskFull={handleCreateTaskFull}
+        handleAddSubtask={handleAddSubtask}
+        handleEditTask={handleEditTask}
+        handleRenameTask={handleRenameTask}
+        handleEditTaskFull={handleEditTaskFull}
+        handleDeleteConfirm={handleDeleteConfirm}
+        handleBulkDeleteConfirm={handleBulkDeleteConfirm}
+        handleSetDueDate={handleSetDueDate}
+        handleSetDeadline={handleSetDeadline}
+        handleMoveToProject={handleMoveToProject}
+        handleLabelsSave={handleLabelsSave}
+        handleFilterInput={handleFilterInput}
+        handleSortSelect={handleSortSelect}
+        handleSearchSubmit={handleSearchSubmit}
+        handleSearchCancel={handleSearchCancel}
+        handleCreateProject={handleCreateProject}
+        handleCreateLabel={handleCreateLabel}
+        renderQuickAddPreview={renderQuickAddPreview}
+        pendingPluginInput={pendingPluginInput}
+        handlePluginInput={handlePluginInput}
+      />
+
+      {pluginExtensions && pluginStatusBarContextMap && pluginExtensions.getStatusBarItems().length > 0 && (
+        <StatusBar
+          items={pluginExtensions.getStatusBarItems()}
+          contextMap={pluginStatusBarContextMap}
         />
       )}
 
@@ -1219,6 +808,7 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
               <Text color="cyan">[1-4]</Text><Text>prio </Text>
               <Text color="green">[t]</Text><Text>due </Text>
               <Text color="blue">[m]</Text><Text>ove </Text>
+              <Text color="magenta">[l]</Text><Text>abel </Text>
               <Text color="cyan">[v]</Text><Text> range </Text>
               <Text color="gray">[Esc]</Text><Text> clear  </Text>
               <Text color="magenta">({selectedIds.size} selected)</Text>
@@ -1234,19 +824,27 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
               <Text color="green">[t]</Text><Text>due </Text>
               <Text color="blue">[m]</Text><Text>ove </Text>
               <Text color="magenta">[l]</Text><Text>abel </Text>
+              <Text color="green">[y]</Text><Text>url </Text>
               <Text color="cyan">[/]</Text><Text>search </Text>
               <Text color="white">[?]</Text><Text>help </Text>
               <Text color="gray">[q]</Text><Text>uit</Text>
             </>
           )}
         </Text>
-        {undoCountdown > 0 && lastAction ? (
-          <Text color="green">[u]ndo ({undoCountdown}s)</Text>
-        ) : statusMessage ? (
-          <Text color="yellow">{statusMessage}</Text>
-        ) : isLoading ? (
-          <Text color="cyan" dimColor>Syncing...</Text>
-        ) : null}
+        <Box>
+          {filteredTasks.length > 0 && (
+            <Text color="gray" dimColor>{taskIndex + 1}/{filteredTasks.length} </Text>
+          )}
+          {undoCountdown > 0 && lastAction ? (
+            <Text color="green" bold>[u]ndo ({undoCountdown}s)</Text>
+          ) : redoCountdown > 0 && lastRedo ? (
+            <Text color="blue" bold>(U)redo ({redoCountdown}s)</Text>
+          ) : statusMessage ? (
+            <Text color="yellow">{statusMessage}</Text>
+          ) : isLoading ? (
+            <Text color="cyan" dimColor>Syncing...</Text>
+          ) : null}
+        </Box>
       </Box>
     </Box>
   );

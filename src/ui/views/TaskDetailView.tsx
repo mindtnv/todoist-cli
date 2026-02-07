@@ -1,11 +1,16 @@
 import { useState, useEffect, useCallback } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
-import type { Task, Comment, Project, Label } from "../../api/types.ts";
+import type { Task, Comment, Project, Label, UpdateTaskParams } from "../../api/types.ts";
 import { getComments, createComment } from "../../api/comments.ts";
-import { closeTask, deleteTask, getTasks } from "../../api/tasks.ts";
+import { closeTask, deleteTask, getTasks, updateTask } from "../../api/tasks.ts";
 import { openUrl } from "../../utils/open-url.ts";
+import { formatDeadlineLong, isDeadlineOverdue, formatCreatedAt } from "../../utils/date-format.ts";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
 import { InputPrompt } from "../components/InputPrompt.tsx";
+import { EditTaskModal } from "../components/EditTaskModal.tsx";
+import { ProjectPicker } from "../components/ProjectPicker.tsx";
+import { LabelPicker } from "../components/LabelPicker.tsx";
+import type { DetailSectionDefinition, PluginContext, HookRegistry } from "../../plugins/types.ts";
 
 interface TaskDetailViewProps {
   task: Task;
@@ -14,6 +19,9 @@ interface TaskDetailViewProps {
   labels: Label[];
   onBack: () => void;
   onTaskChanged: (message?: string) => void;
+  pluginSections?: DetailSectionDefinition[];
+  pluginSectionContextMap?: Map<string, PluginContext>;
+  pluginHooks?: HookRegistry | null;
 }
 
 const priorityLabels: Record<number, { label: string; color: string }> = {
@@ -23,13 +31,13 @@ const priorityLabels: Record<number, { label: string; color: string }> = {
   1: { label: "P1 (Normal)", color: "white" },
 };
 
-export function TaskDetailView({ task, allTasks, projects, labels, onBack, onTaskChanged }: TaskDetailViewProps) {
+export function TaskDetailView({ task, allTasks, projects, labels, onBack, onTaskChanged, pluginSections, pluginSectionContextMap, pluginHooks }: TaskDetailViewProps) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [subtasks, setSubtasks] = useState<Task[]>([]);
   const [loadingComments, setLoadingComments] = useState(true);
   const [statusMessage, setStatusMessage] = useState("");
   const [confirmAction, setConfirmAction] = useState<"none" | "delete">("none");
-  const [modal, setModal] = useState<"none" | "comment">("none");
+  const [modal, setModal] = useState<"none" | "comment" | "due" | "deadline" | "move" | "label" | "editFull">("none");
   const [scrollOffset, setScrollOffset] = useState(0);
   const { stdout } = useStdout();
   const viewportHeight = stdout?.rows ? Math.max(5, stdout.rows - 6) : 30;
@@ -45,6 +53,7 @@ export function TaskDetailView({ task, allTasks, projects, labels, onBack, onTas
         }
       })
       .catch(() => {
+        // Comment loading failed — hide spinner, but don't show error (non-critical data)
         if (!cancelled) {
           setLoadingComments(false);
         }
@@ -69,7 +78,7 @@ export function TaskDetailView({ task, allTasks, projects, labels, onBack, onTas
         }
       })
       .catch(() => {
-        // ignore
+        // Subtask loading failed — non-critical, silently ignore
       });
     return () => {
       cancelled = true;
@@ -80,22 +89,24 @@ export function TaskDetailView({ task, allTasks, projects, labels, onBack, onTas
     try {
       setStatusMessage("Completing task...");
       await closeTask(task.id);
+      try { await pluginHooks?.emit("task.completed", { task }); } catch { /* hook error is non-critical */ }
       onTaskChanged("Task completed!");
     } catch {
       setStatusMessage("Failed to complete task");
     }
-  }, [task.id, onTaskChanged]);
+  }, [task, onTaskChanged, pluginHooks]);
 
   const handleDeleteConfirm = useCallback(async () => {
     setConfirmAction("none");
     try {
       setStatusMessage("Deleting task...");
       await deleteTask(task.id);
+      try { await pluginHooks?.emit("task.deleted", { task }); } catch { /* hook error is non-critical */ }
       onTaskChanged("Task deleted!");
     } catch {
       setStatusMessage("Failed to delete task");
     }
-  }, [task.id, onTaskChanged]);
+  }, [task, onTaskChanged, pluginHooks]);
 
   const handleAddComment = useCallback(
     async (content: string) => {
@@ -122,9 +133,117 @@ export function TaskDetailView({ task, allTasks, projects, labels, onBack, onTas
     }
   }, [task.url]);
 
+  const handleSetPriority = useCallback(async (priority: 1 | 2 | 3 | 4) => {
+    try {
+      setStatusMessage("Setting priority...");
+      try { await pluginHooks?.emit("task.updating", { task, changes: { priority } }); } catch { /* hook error is non-critical */ }
+      await updateTask(task.id, { priority });
+      try { await pluginHooks?.emit("task.updated", { task: { ...task, priority }, changes: { priority } }); } catch { /* hook error is non-critical */ }
+      onTaskChanged(`Priority set to p${priority}`);
+    } catch {
+      setStatusMessage("Failed to set priority");
+    }
+  }, [task, onTaskChanged, pluginHooks]);
+
+  const handleSetDueDate = useCallback(async (dueString: string) => {
+    setModal("none");
+    try {
+      const isRemove = dueString.toLowerCase() === "none" || dueString.toLowerCase() === "clear";
+      const changes: UpdateTaskParams = { due_string: isRemove ? "no date" : dueString };
+      try { await pluginHooks?.emit("task.updating", { task, changes }); } catch { /* hook error is non-critical */ }
+      await updateTask(task.id, changes);
+      try { await pluginHooks?.emit("task.updated", { task, changes }); } catch { /* hook error is non-critical */ }
+      onTaskChanged(isRemove ? "Due date removed" : `Due set to "${dueString}"`);
+    } catch {
+      setStatusMessage("Failed to set due date");
+    }
+  }, [task, onTaskChanged, pluginHooks]);
+
+  const handleSetDeadline = useCallback(async (value: string) => {
+    setModal("none");
+    const isRemove = value.toLowerCase() === "none" || value.toLowerCase() === "clear" || value === "";
+    if (!isRemove && !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      setStatusMessage("Invalid date format. Use YYYY-MM-DD.");
+      return;
+    }
+    try {
+      const changes: UpdateTaskParams = { deadline_date: isRemove ? null : value };
+      try { await pluginHooks?.emit("task.updating", { task, changes }); } catch { /* hook error is non-critical */ }
+      await updateTask(task.id, changes);
+      try { await pluginHooks?.emit("task.updated", { task, changes }); } catch { /* hook error is non-critical */ }
+      onTaskChanged(isRemove ? "Deadline removed" : `Deadline set to ${value}`);
+    } catch {
+      setStatusMessage("Failed to set deadline");
+    }
+  }, [task, onTaskChanged, pluginHooks]);
+
+  const handleMoveToProject = useCallback(async (projectId: string) => {
+    setModal("none");
+    try {
+      const projectName = projects.find((p) => p.id === projectId)?.name ?? "project";
+      const changes: UpdateTaskParams = { project_id: projectId };
+      try { await pluginHooks?.emit("task.updating", { task, changes }); } catch { /* hook error is non-critical */ }
+      await updateTask(task.id, changes);
+      try { await pluginHooks?.emit("task.updated", { task: { ...task, project_id: projectId }, changes }); } catch { /* hook error is non-critical */ }
+      onTaskChanged(`Moved to ${projectName}`);
+    } catch {
+      setStatusMessage("Failed to move task");
+    }
+  }, [task, projects, onTaskChanged, pluginHooks]);
+
+  const handleLabelsSave = useCallback(async (newLabels: string[]) => {
+    setModal("none");
+    try {
+      const changes: UpdateTaskParams = { labels: newLabels };
+      try { await pluginHooks?.emit("task.updating", { task, changes }); } catch { /* hook error is non-critical */ }
+      await updateTask(task.id, changes);
+      try { await pluginHooks?.emit("task.updated", { task: { ...task, labels: newLabels }, changes }); } catch { /* hook error is non-critical */ }
+      onTaskChanged("Labels updated");
+    } catch {
+      setStatusMessage("Failed to update labels");
+    }
+  }, [task, onTaskChanged, pluginHooks]);
+
+  const handleEditFull = useCallback(async (params: UpdateTaskParams & { project_id?: string }) => {
+    setModal("none");
+    try {
+      try { await pluginHooks?.emit("task.updating", { task, changes: params }); } catch { /* hook error is non-critical */ }
+      await updateTask(task.id, params);
+      try { await pluginHooks?.emit("task.updated", { task, changes: params }); } catch { /* hook error is non-critical */ }
+      onTaskChanged("Task updated");
+    } catch {
+      setStatusMessage("Failed to update task");
+    }
+  }, [task, onTaskChanged, pluginHooks]);
+
   useInput((input, key) => {
     if (confirmAction !== "none") return;
     if (modal !== "none") return;
+
+    if (input === "e") {
+      setModal("editFull");
+      return;
+    }
+    if (input === "t") {
+      setModal("due");
+      return;
+    }
+    if (input === "D") {
+      setModal("deadline");
+      return;
+    }
+    if (input === "m") {
+      setModal("move");
+      return;
+    }
+    if (input === "l") {
+      setModal("label");
+      return;
+    }
+    if (input === "1" || input === "2" || input === "3" || input === "4") {
+      handleSetPriority(Number(input) as 1 | 2 | 3 | 4);
+      return;
+    }
 
     if (key.escape || key.backspace || key.delete) {
       onBack();
@@ -199,20 +318,13 @@ export function TaskDetailView({ task, allTasks, projects, labels, onBack, onTas
             </Text>
           </Box>
           {task.deadline && (() => {
-            const parts = task.deadline!.date.split("-").map(Number);
-            const y = parts[0] ?? 2025;
-            const m = parts[1] ?? 1;
-            const d = parts[2] ?? 1;
-            const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-            const formatted = `${months[m - 1]} ${d}, ${y}`;
-            const today = new Date();
-            const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-            const isOverdue = task.deadline!.date < todayStr;
+            const formatted = formatDeadlineLong(task.deadline!.date);
+            const overdue = isDeadlineOverdue(task.deadline!.date);
             return (
               <Box>
                 <Box width={14}><Text color="gray">Deadline:</Text></Box>
-                <Text color="red" bold={isOverdue}>
-                  {formatted}{isOverdue ? " (OVERDUE!)" : ""}
+                <Text color="red" bold={overdue}>
+                  {formatted}{overdue ? " (OVERDUE!)" : ""}
                 </Text>
               </Box>
             );
@@ -223,11 +335,7 @@ export function TaskDetailView({ task, allTasks, projects, labels, onBack, onTas
           </Box>
           <Box>
             <Box width={14}><Text color="gray">Created:</Text></Box>
-            <Text>{(() => {
-              const d = new Date(task.created_at);
-              const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-              return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()} at ${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
-            })()}</Text>
+            <Text>{formatCreatedAt(task.created_at)}</Text>
           </Box>
         </Box>
 
@@ -263,6 +371,17 @@ export function TaskDetailView({ task, allTasks, projects, labels, onBack, onTas
             </Box>
           ))}
         </Box>
+        {pluginSections?.map(section => {
+          const Component = section.component;
+          const sectionCtx = pluginSectionContextMap?.get(section.id);
+          if (!sectionCtx) return null;
+          return (
+            <Box key={section.id} flexDirection="column" marginTop={1}>
+              <Text bold color="cyan">{section.label}</Text>
+              <Component task={task} ctx={sectionCtx} />
+            </Box>
+          );
+        })}
         </Box>
       </Box>
 
@@ -272,6 +391,22 @@ export function TaskDetailView({ task, allTasks, projects, labels, onBack, onTas
           onSubmit={handleAddComment}
           onCancel={() => setModal("none")}
         />
+      )}
+
+      {modal === "due" && (
+        <InputPrompt prompt="Due date" onSubmit={handleSetDueDate} onCancel={() => setModal("none")} />
+      )}
+      {modal === "deadline" && (
+        <InputPrompt prompt="Deadline (YYYY-MM-DD)" onSubmit={handleSetDeadline} onCancel={() => setModal("none")} />
+      )}
+      {modal === "move" && (
+        <ProjectPicker projects={projects} onSelect={handleMoveToProject} onCancel={() => setModal("none")} />
+      )}
+      {modal === "label" && (
+        <LabelPicker labels={labels} currentLabels={task.labels} onSave={handleLabelsSave} onCancel={() => setModal("none")} />
+      )}
+      {modal === "editFull" && (
+        <EditTaskModal task={task} projects={projects} labels={labels} onSave={handleEditFull} onCancel={() => setModal("none")} />
       )}
 
       {confirmAction === "delete" && (
@@ -284,11 +419,16 @@ export function TaskDetailView({ task, allTasks, projects, labels, onBack, onTas
 
       <Box borderStyle="single" borderColor="gray" paddingX={1} justifyContent="space-between">
         <Text>
+          <Text color="blue">[e]</Text><Text>dit </Text>
           <Text color="yellow">[c]</Text><Text>omplete </Text>
           <Text color="red">[d]</Text><Text>elete </Text>
+          <Text color="cyan">[1-4]</Text><Text>prio </Text>
+          <Text color="green">[t]</Text><Text>due </Text>
+          <Text color="magenta">[D]</Text><Text>eadline </Text>
+          <Text color="blue">[m]</Text><Text>ove </Text>
+          <Text color="magenta">[l]</Text><Text>abel </Text>
           <Text color="green">[n]</Text><Text>ew comment </Text>
           <Text color="cyan">[o]</Text><Text>pen </Text>
-          <Text color="gray">[j/k]</Text><Text> scroll </Text>
           <Text color="gray">[Esc]</Text><Text> back</Text>
         </Text>
         {statusMessage ? <Text color="yellow">{statusMessage}</Text> : null}

@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import type { Task } from "../../api/types.ts";
+import type { TaskColumnDefinition, PluginContext } from "../../plugins/types.ts";
 import { TaskRow } from "./TaskRow.tsx";
 
 interface TaskListProps {
@@ -10,6 +11,10 @@ interface TaskListProps {
   onIndexChange: (index: number) => void;
   selectedIds?: Set<string>;
   viewHeight?: number;
+  sortField?: string;
+  searchQuery?: string;
+  pluginColumns?: TaskColumnDefinition[];
+  pluginColumnContextMap?: Map<string, PluginContext>;
 }
 
 interface FlatTask {
@@ -68,6 +73,10 @@ export function TaskList({
   onIndexChange,
   selectedIds,
   viewHeight: viewHeightProp,
+  sortField,
+  searchQuery,
+  pluginColumns,
+  pluginColumnContextMap,
 }: TaskListProps) {
   const { stdout } = useStdout();
   // Reserve lines for header, border, status bar, etc. (~8 lines overhead)
@@ -84,6 +93,13 @@ export function TaskList({
       return () => { if (pendingGTimer.current) clearTimeout(pendingGTimer.current); };
     }
   }, [pendingG]);
+
+  useEffect(() => {
+    if (!isFocused) {
+      setPendingG(false);
+      if (pendingGTimer.current) clearTimeout(pendingGTimer.current);
+    }
+  }, [isFocused]);
 
   useInput(
     (input, key) => {
@@ -136,7 +152,14 @@ export function TaskList({
         justifyContent="center"
         alignItems="center"
       >
-        <Text color="gray">No tasks. Press 'a' to add one.</Text>
+        <Text color="gray">No tasks here</Text>
+        <Box marginTop={1}>
+          <Text color="gray" dimColor>Press </Text>
+          <Text color="green">a</Text>
+          <Text color="gray" dimColor> to add a task or </Text>
+          <Text color="cyan">/</Text>
+          <Text color="gray" dimColor> to search</Text>
+        </Box>
       </Box>
     );
   }
@@ -161,15 +184,68 @@ export function TaskList({
         <Text bold color="blue">Tasks</Text>
         <Text color="gray">{` (${flatTasks.length})`}</Text>
       </Box>
-      {visibleTasks.map((item, i) => (
-        <TaskRow
-          key={item.task.id}
-          task={item.task}
-          isSelected={scrollStart + i === selectedIndex}
-          isMarked={selectedIds?.has(item.task.id)}
-          depth={item.depth}
-        />
-      ))}
+      {sortField === "due" ? (
+        (() => {
+          const today = new Date();
+          const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+          const tomorrow = new Date(today);
+          tomorrow.setDate(tomorrow.getDate() + 1);
+          const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
+          let lastGroup = "";
+          // Track what group the task before the visible window was in
+          for (let k = 0; k < scrollStart; k++) {
+            const ft = flatTasks[k];
+            if (ft && ft.depth === 0) {
+              const d = ft.task.due?.date ?? "9999-99-99";
+              if (d < todayStr) lastGroup = "Overdue";
+              else if (d === todayStr) lastGroup = "Today";
+              else if (d === tomorrowStr) lastGroup = "Tomorrow";
+              else if (d === "9999-99-99") lastGroup = "No date";
+              else lastGroup = d;
+            }
+          }
+          return visibleTasks.map((item, i) => {
+            const dueDate = item.task.due?.date ?? "9999-99-99";
+            let group: string;
+            if (dueDate < todayStr) group = "Overdue";
+            else if (dueDate === todayStr) group = "Today";
+            else if (dueDate === tomorrowStr) group = "Tomorrow";
+            else if (dueDate === "9999-99-99") group = "No date";
+            else group = dueDate;
+            const showHeader = group !== lastGroup && item.depth === 0;
+            if (showHeader) lastGroup = group;
+            return (
+              <Box key={item.task.id} flexDirection="column">
+                {showHeader && (
+                  <Text color="yellow" bold dimColor>{`-- ${group} --`}</Text>
+                )}
+                <TaskRow
+                  task={item.task}
+                  isSelected={scrollStart + i === selectedIndex}
+                  isMarked={selectedIds?.has(item.task.id)}
+                  depth={item.depth}
+                  searchQuery={searchQuery}
+                  pluginColumns={pluginColumns}
+                  pluginColumnContextMap={pluginColumnContextMap}
+                />
+              </Box>
+            );
+          });
+        })()
+      ) : (
+        visibleTasks.map((item, i) => (
+          <TaskRow
+            key={item.task.id}
+            task={item.task}
+            isSelected={scrollStart + i === selectedIndex}
+            isMarked={selectedIds?.has(item.task.id)}
+            depth={item.depth}
+            searchQuery={searchQuery}
+            pluginColumns={pluginColumns}
+            pluginColumnContextMap={pluginColumnContextMap}
+          />
+        ))
+      )}
       {flatTasks.length > viewHeight && (
         <Box marginTop={1}>
           <Text color="gray" dimColor>

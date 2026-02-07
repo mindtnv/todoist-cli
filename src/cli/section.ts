@@ -1,18 +1,12 @@
 import type { Command } from "commander";
 import chalk from "chalk";
 import { getSections, createSection, updateSection, deleteSection } from "../api/sections.ts";
-import { resolveProjectName } from "../utils/quick-add.ts";
 import { handleError } from "../utils/errors.ts";
 import { cliExit } from "../utils/exit.ts";
 import { ID_WIDTH } from "../utils/format.ts";
+import { saveLastList, resolveProjectArg, resolveSectionArg } from "../utils/resolve.ts";
 
 const NAME_WIDTH = 30;
-
-async function resolveProjectOpt(value: string): Promise<string> {
-  const resolved = await resolveProjectName(value);
-  if (resolved) return resolved;
-  return value;
-}
 
 export function registerSectionCommand(program: Command): void {
   const section = program
@@ -25,22 +19,26 @@ export function registerSectionCommand(program: Command): void {
     .requiredOption("-P, --project <name-or-id>", "Project name or ID")
     .action(async (opts: { project: string }) => {
       try {
-        const projectId = await resolveProjectOpt(opts.project);
+        const projectId = await resolveProjectArg(opts.project);
         const sections = await getSections(projectId);
         if (sections.length === 0) {
           console.log(chalk.dim("No sections found."));
           return;
         }
 
-        const header = `${"ID".padEnd(ID_WIDTH)} ${"Name".padEnd(NAME_WIDTH)} Order`;
+        const header = `${"#".padStart(3)} ${"ID".padEnd(ID_WIDTH)} ${"Name".padEnd(NAME_WIDTH)} Order`;
         console.log(chalk.bold(header));
-        console.log(chalk.dim("-".repeat(ID_WIDTH + 1 + NAME_WIDTH + 1 + 5)));
+        console.log(chalk.dim("-".repeat(3 + 1 + ID_WIDTH + 1 + NAME_WIDTH + 1 + 5)));
 
-        for (const s of sections) {
+        for (let i = 0; i < sections.length; i++) {
+          const s = sections[i]!;
+          const num = chalk.dim(String(i + 1).padStart(3));
           const id = s.id.padEnd(ID_WIDTH);
           const name = (s.name.length > 28 ? s.name.slice(0, 27) + "..." : s.name).padEnd(NAME_WIDTH);
-          console.log(`${id} ${name} ${s.order}`);
+          console.log(`${num} ${id} ${name} ${s.order}`);
         }
+
+        saveLastList("section", sections.map(s => ({ id: s.id, label: s.name })));
       } catch (err) {
         handleError(err);
       }
@@ -53,7 +51,7 @@ export function registerSectionCommand(program: Command): void {
     .requiredOption("-P, --project <name-or-id>", "Project name or ID")
     .action(async (name: string, opts: { project: string }) => {
       try {
-        const projectId = await resolveProjectOpt(opts.project);
+        const projectId = await resolveProjectArg(opts.project);
         const result = await createSection({
           name,
           project_id: projectId,
@@ -69,8 +67,9 @@ export function registerSectionCommand(program: Command): void {
     .description("Update a section")
     .argument("<id>", "Section ID")
     .option("--name <name>", "New section name")
-    .action(async (id: string, opts: { name?: string }) => {
+    .action(async (rawId: string, opts: { name?: string }) => {
       try {
+        const id = await resolveSectionArg(rawId);
         if (!opts.name) {
           console.error(chalk.red("No update options provided. Use --name."));
           cliExit(1);
@@ -87,8 +86,9 @@ export function registerSectionCommand(program: Command): void {
     .command("delete")
     .description("Delete a section")
     .argument("<id>", "Section ID")
-    .action(async (id: string) => {
+    .action(async (rawId: string) => {
       try {
+        const id = await resolveSectionArg(rawId);
         await deleteSection(id);
         console.log(chalk.green(`Section ${id} deleted.`));
       } catch (err) {

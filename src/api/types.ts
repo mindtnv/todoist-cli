@@ -19,6 +19,7 @@ export interface Task {
   assignee_id: string | null;
   is_completed: boolean;
   created_at: string;
+  comment_count: number;
   creator_id: string;
   url: string;
 }

@@ -1,5 +1,33 @@
 import type { Command } from "commander";
+import { existsSync, readFileSync, writeFileSync } from "fs";
+import { join } from "path";
+import chalk from "chalk";
+import { CONFIG_DIR } from "../config/index.ts";
 import { cliExit } from "../utils/exit.ts";
+
+const COMPLETION_CACHE_PATH = join(CONFIG_DIR, ".completion-cache.json");
+
+export interface CompletionCache {
+  projects: string[];
+  labels: string[];
+  updated_at?: string;
+}
+
+export function getCompletionCache(): CompletionCache {
+  if (!existsSync(COMPLETION_CACHE_PATH)) {
+    return { projects: [], labels: [] };
+  }
+  try {
+    const raw = readFileSync(COMPLETION_CACHE_PATH, "utf-8");
+    return JSON.parse(raw) as CompletionCache;
+  } catch {
+    return { projects: [], labels: [] };
+  }
+}
+
+export function saveCompletionCache(cache: CompletionCache): void {
+  writeFileSync(COMPLETION_CACHE_PATH, JSON.stringify(cache, null, 2), "utf-8");
+}
 
 const BASH_COMPLETION = `#!/usr/bin/env bash
 # todoist CLI bash completion
@@ -16,6 +44,27 @@ _todoist_completions() {
   section_sub="list create delete update"
   comment_sub="add list delete update"
   template_sub="save apply list"
+
+  # Dynamic completion from cache
+  local cache_file="\${HOME}/.config/todoist-cli/.completion-cache.json"
+  local cached_projects=""
+  local cached_labels=""
+  if [ -f "\${cache_file}" ]; then
+    cached_projects=$(cat "\${cache_file}" | grep -o '"projects":\\s*\\[.*\\]' | sed 's/"projects":\\s*\\[//;s/\\]//;s/"//g;s/,/ /g' 2>/dev/null || echo "")
+    cached_labels=$(cat "\${cache_file}" | grep -o '"labels":\\s*\\[.*\\]' | sed 's/"labels":\\s*\\[//;s/\\]//;s/"//g;s/,/ /g' 2>/dev/null || echo "")
+  fi
+
+  # Complete project names for -P/--project flags
+  case "\${prev}" in
+    -P|--project)
+      COMPREPLY=( $(compgen -W "\${cached_projects}" -- "\${cur}") )
+      return 0
+      ;;
+    -l|--label)
+      COMPREPLY=( $(compgen -W "\${cached_labels}" -- "\${cur}") )
+      return 0
+      ;;
+  esac
 
   case "\${COMP_WORDS[1]}" in
     task)
@@ -43,7 +92,7 @@ _todoist_completions() {
       return 0
       ;;
     completion)
-      COMPREPLY=( $(compgen -W "bash zsh fish" -- "\${cur}") )
+      COMPREPLY=( $(compgen -W "bash zsh fish update" -- "\${cur}") )
       return 0
       ;;
   esac
@@ -57,6 +106,24 @@ complete -F _todoist_completions todoist`;
 
 const ZSH_COMPLETION = `#compdef todoist
 # todoist CLI zsh completion
+
+_todoist_projects() {
+  local cache_file="\${HOME}/.config/todoist-cli/.completion-cache.json"
+  if [[ -f "\${cache_file}" ]]; then
+    local projects
+    projects=(\${(f)"$(cat "\${cache_file}" | python3 -c "import sys,json; [print(p) for p in json.load(sys.stdin).get('projects',[])]" 2>/dev/null)"})
+    compadd -a projects
+  fi
+}
+
+_todoist_labels() {
+  local cache_file="\${HOME}/.config/todoist-cli/.completion-cache.json"
+  if [[ -f "\${cache_file}" ]]; then
+    local labels
+    labels=(\${(f)"$(cat "\${cache_file}" | python3 -c "import sys,json; [print(l) for l in json.load(sys.stdin).get('labels',[])]" 2>/dev/null)"})
+    compadd -a labels
+  fi
+}
 
 _todoist() {
   local -a commands task_sub project_sub label_sub section_sub comment_sub template_sub
@@ -131,6 +198,12 @@ _todoist() {
     'list:List templates'
   )
 
+  # Handle -P/--project and -l/--label flag completions
+  case "\${words[CURRENT-1]}" in
+    -P|--project) _todoist_projects; return ;;
+    -l|--label) _todoist_labels; return ;;
+  esac
+
   if (( CURRENT == 2 )); then
     _describe -t commands 'todoist commands' commands
   elif (( CURRENT == 3 )); then
@@ -141,7 +214,7 @@ _todoist() {
       section) _describe -t section_sub 'section subcommands' section_sub ;;
       comment) _describe -t comment_sub 'comment subcommands' comment_sub ;;
       template) _describe -t template_sub 'template subcommands' template_sub ;;
-      completion) _values 'shell' bash zsh fish ;;
+      completion) _values 'shell or action' bash zsh fish update ;;
     esac
   fi
 }
@@ -152,6 +225,25 @@ const FISH_COMPLETION = `# todoist CLI fish completion
 
 # Disable file completions
 complete -c todoist -f
+
+# Dynamic completion helpers
+function __todoist_cached_projects
+  set -l cache_file "$HOME/.config/todoist-cli/.completion-cache.json"
+  if test -f "$cache_file"
+    cat "$cache_file" | python3 -c "import sys,json; [print(p) for p in json.load(sys.stdin).get('projects',[])]" 2>/dev/null
+  end
+end
+
+function __todoist_cached_labels
+  set -l cache_file "$HOME/.config/todoist-cli/.completion-cache.json"
+  if test -f "$cache_file"
+    cat "$cache_file" | python3 -c "import sys,json; [print(l) for l in json.load(sys.stdin).get('labels',[])]" 2>/dev/null
+  end
+end
+
+# Dynamic completions for -P/--project and -l/--label flags
+complete -c todoist -l project -s P -x -a "(__todoist_cached_projects)" -d "Project name"
+complete -c todoist -l label -s l -x -a "(__todoist_cached_labels)" -d "Label name"
 
 # Main commands
 complete -c todoist -n "__fish_use_subcommand" -a "task" -d "Manage tasks"
@@ -217,15 +309,37 @@ complete -c todoist -n "__fish_seen_subcommand_from template" -a "apply" -d "App
 complete -c todoist -n "__fish_seen_subcommand_from template" -a "list" -d "List templates"
 
 # completion subcommands
-complete -c todoist -n "__fish_seen_subcommand_from completion" -a "bash zsh fish" -d "Shell type"`;
+complete -c todoist -n "__fish_seen_subcommand_from completion" -a "bash zsh fish update" -d "Shell type or action"`;
+
+async function updateCompletionCache(): Promise<void> {
+  const { getProjects } = await import("../api/projects.ts");
+  const { getLabels } = await import("../api/labels.ts");
+
+  try {
+    const [projects, labels] = await Promise.all([getProjects(), getLabels()]);
+    const cache: CompletionCache = {
+      projects: projects.map((p) => p.name),
+      labels: labels.map((l) => l.name),
+      updated_at: new Date().toISOString(),
+    };
+    saveCompletionCache(cache);
+    console.log(
+      chalk.green(`Completion cache updated: ${cache.projects.length} projects, ${cache.labels.length} labels`)
+    );
+    console.log(chalk.dim(`Saved to ${COMPLETION_CACHE_PATH}`));
+  } catch (err) {
+    console.error(chalk.red(`Failed to update completion cache: ${err instanceof Error ? err.message : err}`));
+    cliExit(1);
+  }
+}
 
 export function registerCompletionCommand(program: Command): void {
   program
     .command("completion")
-    .description("Generate shell completion script")
-    .argument("<shell>", "Shell type: bash, zsh, or fish")
-    .action((shell: string) => {
-      switch (shell) {
+    .description("Generate shell completion script or update completion cache")
+    .argument("<shell-or-action>", "Shell type (bash, zsh, fish) or 'update' to refresh completion cache")
+    .action(async (arg: string) => {
+      switch (arg) {
         case "bash":
           console.log(BASH_COMPLETION);
           break;
@@ -235,8 +349,11 @@ export function registerCompletionCommand(program: Command): void {
         case "fish":
           console.log(FISH_COMPLETION);
           break;
+        case "update":
+          await updateCompletionCache();
+          break;
         default:
-          console.error(`Unknown shell: ${shell}. Supported: bash, zsh, fish`);
+          console.error(`Unknown argument: ${arg}. Supported: bash, zsh, fish, update`);
           cliExit(2);
       }
     });

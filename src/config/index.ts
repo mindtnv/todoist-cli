@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from "fs";
 import TOML from "@iarna/toml";
 import type { TaskTemplate } from "../api/types.ts";
 
-const CONFIG_DIR = join(homedir(), ".config", "todoist-cli");
+export const CONFIG_DIR = join(homedir(), ".config", "todoist-cli");
 const CONFIG_PATH = join(CONFIG_DIR, "config.toml");
 const TEMPLATES_PATH = join(CONFIG_DIR, "templates.json");
 
@@ -14,10 +14,27 @@ interface Defaults {
   labels?: string[];
 }
 
-interface Config {
+export type UiTheme = "default" | "minimal" | "compact";
+export type DateFormat = "relative" | "absolute" | "iso";
+
+export interface UiConfig {
+  theme: UiTheme;
+  date_format: DateFormat;
+  refresh_interval: number; // seconds for auto-refresh in TUI
+}
+
+export interface SyncConfig {
+  retry_count: number;  // max API retries
+  timeout: number;      // request timeout in seconds
+}
+
+export interface Config {
   auth?: { api_token?: string };
   defaults?: Defaults;
   filters?: Record<string, string>;
+  plugins?: Record<string, Record<string, unknown>>;
+  ui?: Partial<UiConfig>;
+  sync?: Partial<SyncConfig>;
 }
 
 function ensureConfigDir(): void {
@@ -97,6 +114,38 @@ export function getDefaults(): Defaults {
   return config.defaults ?? {};
 }
 
+// UI config
+
+const UI_DEFAULTS: UiConfig = {
+  theme: "default",
+  date_format: "relative",
+  refresh_interval: 60,
+};
+
+export function getUiConfig(): UiConfig {
+  const config = getConfig();
+  return {
+    theme: config.ui?.theme ?? UI_DEFAULTS.theme,
+    date_format: config.ui?.date_format ?? UI_DEFAULTS.date_format,
+    refresh_interval: config.ui?.refresh_interval ?? UI_DEFAULTS.refresh_interval,
+  };
+}
+
+// Sync config
+
+const SYNC_DEFAULTS: SyncConfig = {
+  retry_count: 3,
+  timeout: 30,
+};
+
+export function getSyncConfig(): SyncConfig {
+  const config = getConfig();
+  return {
+    retry_count: config.sync?.retry_count ?? SYNC_DEFAULTS.retry_count,
+    timeout: config.sync?.timeout ?? SYNC_DEFAULTS.timeout,
+  };
+}
+
 // Saved filters
 
 export function getFilters(): Record<string, string> {
@@ -116,4 +165,28 @@ export function removeFilter(name: string): boolean {
   delete config.filters[name];
   saveConfig(config);
   return true;
+}
+
+export function getPluginConfig(): Record<string, Record<string, unknown>> {
+  const config = getConfig();
+  return config.plugins ?? {};
+}
+
+export function setPluginEntry(name: string, entry: Record<string, unknown>): void {
+  const config = getConfig();
+  if (!config.plugins) config.plugins = {};
+  config.plugins[name] = entry;
+  saveConfig(config);
+}
+
+export function removePluginEntry(name: string): void {
+  const config = getConfig();
+  if (config.plugins) {
+    delete config.plugins[name];
+  }
+  saveConfig(config);
+}
+
+export function getPluginDir(): string {
+  return join(CONFIG_DIR, "plugins");
 }

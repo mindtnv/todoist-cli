@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { Box, Text, useInput } from "ink";
 
-export type SortField = "priority" | "due" | "name" | "project";
+import type { SortField } from "../../utils/sorting.ts";
+export type { SortField };
 
 interface SortMenuProps {
   currentSort: SortField;
+  currentDirection: "asc" | "desc";
   onSelect: (field: SortField) => void;
   onCancel: () => void;
 }
@@ -16,7 +18,7 @@ const sortOptions: { field: SortField; label: string }[] = [
   { field: "project", label: "Project" },
 ];
 
-export function SortMenu({ currentSort, onSelect, onCancel }: SortMenuProps) {
+export function SortMenu({ currentSort, currentDirection, onSelect, onCancel }: SortMenuProps) {
   const currentIndex = sortOptions.findIndex((o) => o.field === currentSort);
   const [selectedIndex, setSelectedIndex] = useState(currentIndex >= 0 ? currentIndex : 0);
 
@@ -54,6 +56,7 @@ export function SortMenu({ currentSort, onSelect, onCancel }: SortMenuProps) {
       {sortOptions.map((option, i) => {
         const isActive = i === selectedIndex;
         const isCurrent = option.field === currentSort;
+        const directionArrow = isCurrent ? (currentDirection === "asc" ? " ↑" : " ↓") : "";
         return (
           <Box key={option.field}>
             <Text
@@ -61,13 +64,13 @@ export function SortMenu({ currentSort, onSelect, onCancel }: SortMenuProps) {
               color={isActive ? "black" : isCurrent ? "magenta" : "white"}
               bold={isActive}
             >
-              {isActive ? "> " : "  "}{option.label}{isCurrent ? " *" : ""}
+              {isActive ? "> " : "  "}{option.label}{isCurrent ? " *" : ""}{directionArrow}
             </Text>
           </Box>
         );
       })}
       <Box marginTop={1}>
-        <Text color="gray" dimColor>Arrow keys + Enter to select, Esc to cancel</Text>
+        <Text color="gray" dimColor>Arrow keys + Enter to select (same field toggles direction), Esc to cancel</Text>
       </Box>
     </Box>
   );
