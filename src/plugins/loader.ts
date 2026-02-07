@@ -1,5 +1,5 @@
 import { join, dirname } from "path";
-import { existsSync, readFileSync, symlinkSync, lstatSync, realpathSync } from "fs";
+import { existsSync, readFileSync, symlinkSync, lstatSync, unlinkSync, realpathSync } from "fs";
 import type {
   TodoistPlugin, PluginManifest, PluginContext,
   HookRegistry, ViewRegistry, ExtensionRegistry, PaletteRegistry,
@@ -13,34 +13,42 @@ import { CONFIG_DIR, getConfig } from "../config/index.ts";
 const PLUGINS_DIR = join(CONFIG_DIR, "plugins");
 
 /**
- * Ensure plugins can resolve shared dependencies (react, ink, etc.)
- * by symlinking PLUGINS_DIR/node_modules → CLI's node_modules.
+ * Plugins live in ~/.config/todoist-cli/plugins/ which is outside the CLI's
+ * module resolution tree. They need access to host dependencies (react, ink,
+ * chalk, etc.) and MUST share the same React instance to avoid hook errors.
+ *
+ * We create a symlink: PLUGINS_DIR/node_modules → CLI's node_modules.
+ * Bun's module resolution walks up from plugin files and finds this symlink.
+ *
+ * Alternatives considered and rejected:
+ * - Bun.plugin onResolve: does not intercept runtime dynamic imports
+ * - NODE_PATH: only works when set before process starts, not from within
+ * - bun install per plugin: creates separate React copies → hook errors
  */
 function ensureSharedDependencies(): void {
   if (!existsSync(PLUGINS_DIR)) return;
 
   const target = join(PLUGINS_DIR, "node_modules");
 
-  // Already exists (real dir or valid symlink) — nothing to do
+  // Valid symlink or real directory — nothing to do
   if (existsSync(target)) return;
 
-  // Broken symlink — lstat succeeds but existsSync fails
+  // Broken symlink (target moved): lstat succeeds but existsSync fails
   try {
-    lstatSync(target);
-    // It's a broken symlink — remove it so we can recreate
-    const { unlinkSync } = require("fs");
-    unlinkSync(target);
+    if (lstatSync(target).isSymbolicLink()) {
+      unlinkSync(target);
+    }
   } catch {
-    // Doesn't exist at all — good, we'll create it
+    // Doesn't exist at all — proceed to create
   }
 
   try {
-    // Resolve CLI's node_modules via a known dependency
+    // Derive CLI's node_modules from a known dependency
     const reactPkg = require.resolve("react/package.json");
-    const cliNodeModules = join(dirname(reactPkg), "..");
-    symlinkSync(realpathSync(cliNodeModules), target, "dir");
+    const cliNodeModules = realpathSync(join(dirname(reactPkg), ".."));
+    symlinkSync(cliNodeModules, target);
   } catch {
-    // Non-fatal: plugins without JSX/shared deps will still work
+    // Non-fatal: plugins that don't need host deps will still work
   }
 }
 
