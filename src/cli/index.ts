@@ -21,10 +21,10 @@ import { loadCliPlugins } from "./plugin-loader.ts";
 import { getTasks, createTask } from "../api/tasks.ts";
 import { didYouMean, handleError, setDebug, debug } from "../utils/errors.ts";
 import { validateContent, validatePriority } from "../utils/validation.ts";
-import type { Task, Priority, CreateTaskParams } from "../api/types.ts";
+import type { Task, Priority } from "../api/types.ts";
 import { padEnd, priorityColor, priorityLabel, ID_WIDTH, PRI_WIDTH, getContentWidth, getDueWidth } from "../utils/format.ts";
 import { formatTasksDelimited } from "../utils/output.ts";
-import { parseQuickAdd, resolveProjectName, resolveSectionName } from "../utils/quick-add.ts";
+import { parseQuickAdd, resolveProjectName, quickAddResultToParams } from "../utils/quick-add.ts";
 import { getFilters } from "../config/index.ts";
 import { cliExit } from "../utils/exit.ts";
 
@@ -454,20 +454,7 @@ program
         for (const line of lines) {
           try {
             const parsed = parseQuickAdd(line);
-            const params: CreateTaskParams = { content: parsed.content };
-            if (parsed.description) params.description = parsed.description;
-            if (parsed.priority) params.priority = parsed.priority;
-            if (parsed.labels.length > 0) params.labels = parsed.labels;
-            if (parsed.due_string) params.due_string = parsed.due_string;
-            if (parsed.deadline) params.deadline_date = parsed.deadline;
-            if (parsed.project_name) {
-              const resolvedId = await resolveProjectName(parsed.project_name);
-              if (resolvedId) params.project_id = resolvedId;
-            }
-            if (parsed.section_name) {
-              const resolvedId = await resolveSectionName(parsed.section_name, params.project_id);
-              if (resolvedId) params.section_id = resolvedId;
-            }
+            const params = await quickAddResultToParams(parsed);
             // Shared flags override
             if (opts.project) {
               const resolvedId = await resolveProjectName(opts.project);
@@ -527,20 +514,7 @@ program
 
       // Parse and create
       const parsed = parseQuickAdd(text);
-      const params: CreateTaskParams = { content: parsed.content };
-      if (parsed.description) params.description = parsed.description;
-      if (parsed.priority) params.priority = parsed.priority;
-      if (parsed.labels.length > 0) params.labels = parsed.labels;
-      if (parsed.due_string) params.due_string = parsed.due_string;
-      if (parsed.deadline) params.deadline_date = parsed.deadline;
-      if (parsed.project_name) {
-        const resolvedId = await resolveProjectName(parsed.project_name);
-        if (resolvedId) params.project_id = resolvedId;
-      }
-      if (parsed.section_name) {
-        const resolvedId = await resolveSectionName(parsed.section_name, params.project_id);
-        if (resolvedId) params.section_id = resolvedId;
-      }
+      const params = await quickAddResultToParams(parsed);
       // Explicit flags override quick-add
       if (opts.project) {
         const resolvedId = await resolveProjectName(opts.project);

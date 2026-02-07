@@ -3,11 +3,12 @@ import chalk from "chalk";
 import { createInterface } from "node:readline";
 import type { Priority, CreateTaskParams } from "../../../api/types.ts";
 import { createTask } from "../../../api/tasks.ts";
-import { parseQuickAdd, resolveProjectName, resolveSectionName } from "../../../utils/quick-add.ts";
+import { parseQuickAdd, resolveProjectName, resolveSectionName, quickAddResultToParams } from "../../../utils/quick-add.ts";
 import { handleError } from "../../../utils/errors.ts";
 import { validateContent, validatePriority, validateDateString } from "../../../utils/validation.ts";
 import { getDefaults } from "../../../config/index.ts";
 import { cliExit } from "../../../utils/exit.ts";
+import { isClearValue } from "../../../utils/clear-values.ts";
 import { readStdin } from "./helpers.ts";
 import { resolveTaskArg, resolveProjectArg, resolveSectionArg } from "../../../utils/resolve.ts";
 import { getCliHookRegistry } from "../../plugin-loader.ts";
@@ -168,20 +169,7 @@ Examples:
           for (const line of lines) {
             try {
               const parsed = parseQuickAdd(line);
-              const params: CreateTaskParams = { content: parsed.content };
-              if (parsed.description) params.description = parsed.description;
-              if (parsed.priority) params.priority = parsed.priority;
-              if (parsed.labels.length > 0) params.labels = parsed.labels;
-              if (parsed.due_string) params.due_string = parsed.due_string;
-              if (parsed.deadline) params.deadline_date = parsed.deadline;
-              if (parsed.project_name) {
-                const resolvedId = await resolveProjectName(parsed.project_name);
-                if (resolvedId) params.project_id = resolvedId;
-              }
-              if (parsed.section_name) {
-                const resolvedId = await resolveSectionName(parsed.section_name, params.project_id);
-                if (resolvedId) params.section_id = resolvedId;
-              }
+              const params = await quickAddResultToParams(parsed);
               // Shared flags override parsed values
               if (opts.project) params.project_id = await resolveProjectArg(opts.project);
               if (opts.priority) params.priority = parseInt(opts.priority, 10) as Priority;
@@ -228,7 +216,7 @@ Examples:
         }
 
         // Validate deadline format if provided
-        if (opts.deadline && opts.deadline !== "none" && opts.deadline !== "clear") {
+        if (opts.deadline && !isClearValue(opts.deadline)) {
           const dateError = validateDateString(opts.deadline);
           if (dateError) {
             console.error(chalk.red(dateError));
@@ -283,20 +271,15 @@ Examples:
         if (!hasExplicitFlags) {
           // Use quick-add parser
           const parsed = parseQuickAdd(text);
-          content = parsed.content;
-          if (parsed.priority) priority = parsed.priority;
-          if (parsed.labels.length > 0) labels = parsed.labels;
-          if (parsed.due_string) dueString = parsed.due_string;
-          if (parsed.deadline) deadlineDate = parsed.deadline;
+          const quickParams = await quickAddResultToParams(parsed);
+          content = quickParams.content;
+          if (quickParams.priority) priority = quickParams.priority;
+          if (quickParams.labels && quickParams.labels.length > 0) labels = quickParams.labels;
+          if (quickParams.due_string) dueString = quickParams.due_string;
+          if (quickParams.deadline_date) deadlineDate = quickParams.deadline_date;
           if (parsed.description && !description) description = parsed.description;
-          if (parsed.project_name) {
-            const resolvedId = await resolveProjectName(parsed.project_name);
-            if (resolvedId) projectId = resolvedId;
-          }
-          if (parsed.section_name) {
-            const resolvedId = await resolveSectionName(parsed.section_name, projectId);
-            if (resolvedId) sectionId = resolvedId;
-          }
+          if (quickParams.project_id) projectId = quickParams.project_id;
+          if (quickParams.section_id) sectionId = quickParams.section_id;
         } else {
           if (opts.priority) priority = parseInt(opts.priority, 10) as Priority;
         }

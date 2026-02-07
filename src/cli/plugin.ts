@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import chalk from "chalk";
+import { cliExit } from "../utils/exit.ts";
 import {
   discoverPlugins,
   installPlugin,
@@ -51,7 +52,7 @@ export function registerPluginCommand(program: Command): void {
         }
       } catch (err) {
         console.error(chalk.red(`Error: ${err instanceof Error ? err.message : String(err)}`));
-        process.exit(1);
+        cliExit(1);
       }
     });
 
@@ -100,7 +101,7 @@ export function registerPluginCommand(program: Command): void {
         }
       } catch (err) {
         console.error(chalk.red(`Error: ${err instanceof Error ? err.message : String(err)}`));
-        process.exit(1);
+        cliExit(1);
       }
     });
 
@@ -129,7 +130,7 @@ export function registerPluginCommand(program: Command): void {
         }
       } catch (err) {
         console.error(chalk.red(`Failed to install: ${err instanceof Error ? err.message : String(err)}`));
-        process.exit(1);
+        cliExit(1);
       }
     });
 
@@ -144,7 +145,7 @@ export function registerPluginCommand(program: Command): void {
         console.log(chalk.green(`Removed ${name}`));
       } catch (err) {
         console.error(chalk.red(`Error: ${err instanceof Error ? err.message : String(err)}`));
-        process.exit(1);
+        cliExit(1);
       }
     });
 
@@ -181,7 +182,7 @@ export function registerPluginCommand(program: Command): void {
         }
       } catch (err) {
         console.error(chalk.red(`Error: ${err instanceof Error ? err.message : String(err)}`));
-        process.exit(1);
+        cliExit(1);
       }
     });
 
@@ -196,7 +197,7 @@ export function registerPluginCommand(program: Command): void {
         console.log(chalk.green(`Enabled ${name}`));
       } catch (err) {
         console.error(chalk.red(`Error: ${err instanceof Error ? err.message : String(err)}`));
-        process.exit(1);
+        cliExit(1);
       }
     });
 
@@ -211,7 +212,7 @@ export function registerPluginCommand(program: Command): void {
         console.log(chalk.yellow(`Disabled ${name}`));
       } catch (err) {
         console.error(chalk.red(`Error: ${err instanceof Error ? err.message : String(err)}`));
-        process.exit(1);
+        cliExit(1);
       }
     });
 
@@ -237,7 +238,7 @@ export function registerPluginCommand(program: Command): void {
         }
       } catch (err) {
         console.error(chalk.red(`Error: ${err instanceof Error ? err.message : String(err)}`));
-        process.exit(1);
+        cliExit(1);
       }
     });
 
@@ -252,7 +253,7 @@ export function registerPluginCommand(program: Command): void {
         console.log(chalk.green(`Added marketplace "${name}" from ${source}`));
       } catch (err) {
         console.error(chalk.red(`Error: ${err instanceof Error ? err.message : String(err)}`));
-        process.exit(1);
+        cliExit(1);
       }
     });
 
@@ -267,7 +268,7 @@ export function registerPluginCommand(program: Command): void {
         console.log(chalk.green(`Removed marketplace "${name}"`));
       } catch (err) {
         console.error(chalk.red(`Error: ${err instanceof Error ? err.message : String(err)}`));
-        process.exit(1);
+        cliExit(1);
       }
     });
 
@@ -283,7 +284,7 @@ export function registerPluginCommand(program: Command): void {
         console.log(chalk.green(`Marketplace cache refreshed.`));
       } catch (err) {
         console.error(chalk.red(`Error: ${err instanceof Error ? err.message : String(err)}`));
-        process.exit(1);
+        cliExit(1);
       }
     });
 }

@@ -99,44 +99,34 @@ export function useTaskOperations({
     }
   }, [selectedTask, tasks, onTasksChange, filteredTasksLength, startUndoTimer, refreshTasks, showStatus, setModal, setTaskIndex, setRangeSelectAnchor, lastActionRef, clearUndo, pluginHooks]);
 
-  const handleEditTask = useCallback(
-    async (newContent: string) => {
+  const handleUpdateContent = useCallback(
+    async (newContent: string, successMessage: string, failureMessage: string) => {
       if (!selectedTask) return;
       setModal("none");
       const taskId = selectedTask.id;
       const prevTasks = [...tasks];
       onTasksChange(tasks.map((t) => (t.id === taskId ? { ...t, content: newContent } : t)));
-      showStatus("Task updated!");
+      showStatus(successMessage);
       try {
         await updateTask(taskId, { content: newContent });
         try { await pluginHooks?.emit("task.updated", { task: { ...selectedTask, content: newContent }, changes: { content: newContent } }); } catch (err) { console.warn("[plugin-hook]", err); }
         refreshTasks().catch(() => { /* background refresh — failure is non-critical */ });
       } catch {
         onTasksChange(prevTasks);
-        showStatus("Failed to update task");
+        showStatus(failureMessage);
       }
     },
     [selectedTask, tasks, onTasksChange, refreshTasks, showStatus, setModal, pluginHooks],
   );
 
+  const handleEditTask = useCallback(
+    (newContent: string) => handleUpdateContent(newContent, "Task updated!", "Failed to update task"),
+    [handleUpdateContent],
+  );
+
   const handleRenameTask = useCallback(
-    async (newContent: string) => {
-      if (!selectedTask) return;
-      setModal("none");
-      const taskId = selectedTask.id;
-      const prevTasks = [...tasks];
-      onTasksChange(tasks.map((t) => (t.id === taskId ? { ...t, content: newContent } : t)));
-      showStatus("Renamed!");
-      try {
-        await updateTask(taskId, { content: newContent });
-        try { await pluginHooks?.emit("task.updated", { task: { ...selectedTask, content: newContent }, changes: { content: newContent } }); } catch (err) { console.warn("[plugin-hook]", err); }
-        refreshTasks().catch(() => { /* background refresh — failure is non-critical */ });
-      } catch {
-        onTasksChange(prevTasks);
-        showStatus("Failed to rename task");
-      }
-    },
-    [selectedTask, tasks, onTasksChange, refreshTasks, showStatus, setModal, pluginHooks],
+    (newContent: string) => handleUpdateContent(newContent, "Renamed!", "Failed to rename task"),
+    [handleUpdateContent],
   );
 
   const handleBulkComplete = useCallback(async () => {

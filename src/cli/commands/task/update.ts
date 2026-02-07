@@ -5,6 +5,7 @@ import type { UpdateTaskParams } from "../../../api/types.ts";
 import { handleError } from "../../../utils/errors.ts";
 import { validateContent, validatePriority, validateDateString } from "../../../utils/validation.ts";
 import { cliExit } from "../../../utils/exit.ts";
+import { isClearValue } from "../../../utils/clear-values.ts";
 import { resolveTaskArg, resolveProjectArg, resolveSectionArg } from "../../../utils/resolve.ts";
 import { getCliHookRegistry } from "../../plugin-loader.ts";
 
@@ -45,7 +46,7 @@ export function registerUpdateCommand(task: Command): void {
         }
 
         // Validate deadline format if provided
-        if (opts.deadline && opts.deadline !== "none" && opts.deadline !== "clear") {
+        if (opts.deadline && !isClearValue(opts.deadline)) {
           const dateError = validateDateString(opts.deadline);
           if (dateError) {
             console.error(chalk.red(dateError));
@@ -59,7 +60,7 @@ export function registerUpdateCommand(task: Command): void {
         if (opts.description !== undefined) params.description = opts.description;
 
         if (opts.due) {
-          if (opts.due === "none" || opts.due === "clear") {
+          if (isClearValue(opts.due)) {
             params.due_string = null as unknown as string;
           } else {
             params.due_string = opts.due;
@@ -67,7 +68,7 @@ export function registerUpdateCommand(task: Command): void {
         }
 
         if (opts.deadline) {
-          if (opts.deadline === "none" || opts.deadline === "clear") {
+          if (isClearValue(opts.deadline)) {
             params.deadline_date = null;
           } else {
             params.deadline_date = opts.deadline;

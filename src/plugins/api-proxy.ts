@@ -9,7 +9,7 @@
  * - Read operations (getTasks, getTask, getProjects, getLabels, getSections,
  *   getComments) pass through directly to the underlying API without hooks.
  */
-import type { HookRegistry, PluginApi } from "./types.ts";
+import type { HookRegistry, HookEvent, HookContextMap, PluginApi } from "./types.ts";
 import * as tasksApi from "../api/tasks.ts";
 import * as projectsApi from "../api/projects.ts";
 import * as labelsApi from "../api/labels.ts";
@@ -18,30 +18,42 @@ import * as commentsApi from "../api/comments.ts";
 import type { TaskFilter, CreateTaskParams, UpdateTaskParams } from "../api/types.ts";
 
 export function createApiProxy(hooks: HookRegistry): PluginApi {
+  let emitting = false;
+
+  async function safeEmit<E extends HookEvent>(event: E, ctx: HookContextMap[E]): Promise<string[]> {
+    if (emitting) return [];
+    emitting = true;
+    try {
+      return await hooks.emit(event, ctx);
+    } finally {
+      emitting = false;
+    }
+  }
+
   return {
     getTasks: (filter?: TaskFilter) => tasksApi.getTasks(filter),
     getTask: (id: string) => tasksApi.getTask(id),
 
     async createTask(params: CreateTaskParams) {
-      await hooks.emit("task.creating", { params });
+      await safeEmit("task.creating", { params });
       const task = await tasksApi.createTask(params);
-      await hooks.emit("task.created", { task });
+      await safeEmit("task.created", { task });
       return task;
     },
 
     async updateTask(id: string, changes: UpdateTaskParams) {
       const task = await tasksApi.getTask(id);
-      await hooks.emit("task.updating", { task, changes });
+      await safeEmit("task.updating", { task, changes });
       const updated = await tasksApi.updateTask(id, changes);
-      await hooks.emit("task.updated", { task: updated, changes });
+      await safeEmit("task.updated", { task: updated, changes });
       return updated;
     },
 
     async closeTask(id: string) {
       const task = await tasksApi.getTask(id);
-      await hooks.emit("task.completing", { task });
+      await safeEmit("task.completing", { task });
       await tasksApi.closeTask(id);
-      await hooks.emit("task.completed", { task });
+      await safeEmit("task.completed", { task });
     },
 
     async reopenTask(id: string) {
@@ -50,9 +62,9 @@ export function createApiProxy(hooks: HookRegistry): PluginApi {
 
     async deleteTask(id: string) {
       const task = await tasksApi.getTask(id);
-      await hooks.emit("task.deleting", { task });
+      await safeEmit("task.deleting", { task });
       await tasksApi.deleteTask(id);
-      await hooks.emit("task.deleted", { task });
+      await safeEmit("task.deleted", { task });
     },
 
     getProjects: () => projectsApi.getProjects(),

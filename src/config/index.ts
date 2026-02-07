@@ -77,8 +77,7 @@ export function setToken(token: string): void {
 export function requireToken(): string {
   const token = getToken();
   if (!token) {
-    console.error("Not authenticated. Run `todoist auth` first.");
-    process.exit(1);
+    throw new Error("Not authenticated. Run `todoist auth` first.");
   }
   return token;
 }

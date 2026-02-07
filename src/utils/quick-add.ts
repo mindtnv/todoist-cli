@@ -1,4 +1,4 @@
-import type { Priority } from "../api/types.ts";
+import type { Priority, CreateTaskParams } from "../api/types.ts";
 import { getProjects } from "../api/projects.ts";
 
 export interface QuickAddResult {
@@ -199,4 +199,25 @@ export async function resolveSectionName(name: string, projectId?: string): Prom
   const lower = name.toLowerCase();
   const found = sections.find((s) => s.name.toLowerCase() === lower);
   return found?.id;
+}
+
+/**
+ * Convert a QuickAddResult to CreateTaskParams, resolving project and section names to IDs.
+ */
+export async function quickAddResultToParams(parsed: QuickAddResult): Promise<CreateTaskParams> {
+  const params: CreateTaskParams = { content: parsed.content };
+  if (parsed.description) params.description = parsed.description;
+  if (parsed.priority) params.priority = parsed.priority;
+  if (parsed.labels.length > 0) params.labels = parsed.labels;
+  if (parsed.due_string) params.due_string = parsed.due_string;
+  if (parsed.deadline) params.deadline_date = parsed.deadline;
+  if (parsed.project_name) {
+    const resolvedId = await resolveProjectName(parsed.project_name);
+    if (resolvedId) params.project_id = resolvedId;
+  }
+  if (parsed.section_name) {
+    const resolvedId = await resolveSectionName(parsed.section_name, params.project_id);
+    if (resolvedId) params.section_id = resolvedId;
+  }
+  return params;
 }

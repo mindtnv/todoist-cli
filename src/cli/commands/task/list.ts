@@ -14,8 +14,8 @@ import {
   groupByLabel,
   groupByDate,
   printGrouped,
-  resolveProjectOpt,
 } from "./helpers.ts";
+import { resolveProjectArg } from "../../../utils/resolve.ts";
 import { sortTasks } from "../../../utils/sorting.ts";
 
 export function registerListCommand(task: Command): void {
@@ -59,7 +59,7 @@ export function registerListCommand(task: Command): void {
         if (!filter && opts.today) filter = "today";
         else if (!filter && opts.overdue) filter = "overdue";
 
-        let projectId = opts.project ? await resolveProjectOpt(opts.project) : undefined;
+        let projectId = opts.project ? await resolveProjectArg(opts.project) : undefined;
 
         let tasks = await getTasks({
           project_id: projectId,

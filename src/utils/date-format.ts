@@ -15,7 +15,7 @@ export function formatDeadlineShort(dateStr: string): string {
 
 export function formatDeadlineLong(dateStr: string): string {
   const parts = dateStr.split("-").map(Number);
-  const y = parts[0] ?? 2025;
+  const y = parts[0] ?? new Date().getFullYear();
   const m = parts[1] ?? 1;
   const d = parts[2] ?? 1;
   return `${FULL_MONTHS[m - 1]} ${d}, ${y}`;

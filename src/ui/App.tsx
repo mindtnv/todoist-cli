@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import React, { Component, useState, useEffect, useCallback, useRef } from "react";
 import { render, Box, Text, useApp } from "ink";
 import type { Task, Project, Label, Section } from "../api/types.ts";
 import { getTasks } from "../api/tasks.ts";
@@ -15,8 +15,28 @@ import { createHookRegistry } from "../plugins/hook-registry.ts";
 import { createViewRegistry } from "../plugins/view-registry.ts";
 import { createExtensionRegistry } from "../plugins/extension-registry.ts";
 import { createPaletteRegistry } from "../plugins/palette-registry.ts";
-import { loadPlugins } from "../plugins/loader.ts";
+import { loadPlugins, unloadPlugins } from "../plugins/loader.ts";
 import type { LoadedPlugins } from "../plugins/loader.ts";
+
+class ErrorBoundary extends Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  override state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  override render() {
+    if (this.state.error) {
+      return (
+        <Box flexDirection="column" padding={1}>
+          <Text color="red" bold>Something went wrong</Text>
+          <Text>{this.state.error.message}</Text>
+          <Text dimColor>Press Ctrl+C to quit</Text>
+        </Box>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 type View =
   | { type: "list" }
@@ -41,6 +61,7 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
+    let loadedRef: LoadedPlugins | null = null;
 
     async function init() {
       try {
@@ -64,6 +85,7 @@ function App() {
             const extReg = createExtensionRegistry();
             const palReg = createPaletteRegistry();
             const lp = await loadPlugins(hooks, viewReg, extReg, palReg);
+            loadedRef = lp;
             if (!cancelled) setLoadedPlugins(lp);
           } catch {
             // Plugin loading failure is non-fatal
@@ -80,6 +102,7 @@ function App() {
     init();
     return () => {
       cancelled = true;
+      if (loadedRef) unloadPlugins(loadedRef).catch(() => {});
     };
   }, []);
 
@@ -145,78 +168,86 @@ function App() {
     );
   }
 
-  if (view.type === "detail") {
+  const renderView = () => {
+    if (view.type === "detail") {
+      return (
+        <TaskDetailView
+          task={view.task}
+          allTasks={tasks}
+          projects={projects}
+          labels={labels}
+          onBack={handleBackToList}
+          onTaskChanged={handleTaskChanged}
+          pluginSections={loadedPlugins?.extensions.getDetailSections()}
+          pluginSectionContextMap={loadedPlugins?.detailSectionContextMap}
+          pluginHooks={loadedPlugins?.hooks ?? null}
+        />
+      );
+    }
+
+    if (view.type === "stats") {
+      return <StatsView onBack={handleBackToList} />;
+    }
+
+    if (view.type === "completed") {
+      return <CompletedView onBack={handleBackToList} />;
+    }
+
+    if (view.type === "activity") {
+      return <ActivityView onBack={handleBackToList} />;
+    }
+
+    if (view.type === "plugin" && loadedPlugins) {
+      const pluginView = loadedPlugins.views.getViews().find(v => v.name === view.name);
+      if (pluginView) {
+        const ctx = loadedPlugins.viewContextMap.get(view.name);
+        if (ctx) {
+          const PluginComponent = pluginView.component;
+          return (
+            <PluginComponent
+              onBack={handleBackToList}
+              onNavigate={handleNavigate}
+              ctx={ctx}
+              tasks={tasks}
+              projects={projects}
+              labels={labels}
+            />
+          );
+        }
+      }
+    }
+
     return (
-      <TaskDetailView
-        task={view.task}
-        allTasks={tasks}
+      <TasksView
+        tasks={tasks}
         projects={projects}
         labels={labels}
-        onBack={handleBackToList}
-        onTaskChanged={handleTaskChanged}
-        pluginSections={loadedPlugins?.extensions.getDetailSections()}
-        pluginSectionContextMap={loadedPlugins?.detailSectionContextMap}
+        onTasksChange={setTasks}
+        onProjectsChange={setProjects}
+        onLabelsChange={setLabels}
+        onQuit={exit}
+        onOpenTask={handleOpenTask}
+        sections={sections}
+        onNavigate={handleNavigate}
+        initialStatus={statusMessage}
+        onStatusClear={() => setStatusMessage("")}
+        savedStateRef={listStateRef}
+        pluginExtensions={loadedPlugins?.extensions ?? null}
+        pluginPalette={loadedPlugins?.palette ?? null}
+        pluginViews={loadedPlugins?.views ?? null}
+        pluginKeybindingContextMap={loadedPlugins?.keybindingContextMap}
+        pluginColumnContextMap={loadedPlugins?.columnContextMap}
+        pluginPaletteContextMap={loadedPlugins?.paletteContextMap}
+        pluginStatusBarContextMap={loadedPlugins?.statusBarContextMap}
         pluginHooks={loadedPlugins?.hooks ?? null}
       />
     );
-  }
-
-  if (view.type === "stats") {
-    return <StatsView onBack={handleBackToList} />;
-  }
-
-  if (view.type === "completed") {
-    return <CompletedView onBack={handleBackToList} />;
-  }
-
-  if (view.type === "activity") {
-    return <ActivityView onBack={handleBackToList} />;
-  }
-
-  if (view.type === "plugin" && loadedPlugins) {
-    const pluginView = loadedPlugins.views.getViews().find(v => v.name === view.name);
-    if (pluginView) {
-      const ctx = loadedPlugins.viewContextMap.get(view.name);
-      if (ctx) {
-        const Component = pluginView.component;
-        return (
-          <Component
-            onBack={handleBackToList}
-            onNavigate={handleNavigate}
-            ctx={ctx}
-            tasks={tasks}
-            projects={projects}
-            labels={labels}
-          />
-        );
-      }
-    }
-  }
+  };
 
   return (
-    <TasksView
-      tasks={tasks}
-      projects={projects}
-      labels={labels}
-      onTasksChange={setTasks}
-      onProjectsChange={setProjects}
-      onLabelsChange={setLabels}
-      onQuit={exit}
-      onOpenTask={handleOpenTask}
-      sections={sections}
-      onNavigate={handleNavigate}
-      initialStatus={statusMessage}
-      onStatusClear={() => setStatusMessage("")}
-      savedStateRef={listStateRef}
-      pluginExtensions={loadedPlugins?.extensions ?? null}
-      pluginPalette={loadedPlugins?.palette ?? null}
-      pluginViews={loadedPlugins?.views ?? null}
-      pluginKeybindingContextMap={loadedPlugins?.keybindingContextMap}
-      pluginColumnContextMap={loadedPlugins?.columnContextMap}
-      pluginPaletteContextMap={loadedPlugins?.paletteContextMap}
-      pluginStatusBarContextMap={loadedPlugins?.statusBarContextMap}
-      pluginHooks={loadedPlugins?.hooks ?? null}
-    />
+    <ErrorBoundary>
+      {renderView()}
+    </ErrorBoundary>
   );
 }
 

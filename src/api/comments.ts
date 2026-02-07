@@ -5,6 +5,10 @@ export async function getComments(taskId: string): Promise<Comment[]> {
   return api.get<Comment[]>("/comments", { task_id: taskId });
 }
 
+export async function getComment(id: string): Promise<Comment> {
+  return api.get<Comment>(`/comments/${id}`);
+}
+
 export async function createComment(params: CreateCommentParams): Promise<Comment> {
   return api.post<Comment>("/comments", stripUndefined(params as unknown as Record<string, unknown>));
 }

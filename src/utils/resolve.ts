@@ -149,6 +149,34 @@ function matchByName(
 }
 
 // ---------------------------------------------------------------------------
+// Generic Named Entity Resolver
+// ---------------------------------------------------------------------------
+
+/**
+ * Generic resolver for named entities (projects, labels, sections).
+ *
+ * Resolution order:
+ * 1. Short index (1-999 or #N) -- looked up in cached last-list
+ * 2. Name match (exact -> prefix -> substring, case-insensitive)
+ * 3. Raw ID -- returned as-is
+ */
+async function resolveNamedEntityArg(
+  value: string,
+  fetchItems: () => Promise<{ id: string; name: string }[]>,
+): Promise<string> {
+  if (isShortIndex(value)) {
+    const id = resolveFromIndex(value);
+    if (id) return id;
+  }
+  if (!isShortIndex(value) && !isRawId(value)) {
+    const items = await fetchItems();
+    const matched = matchByName(value, items);
+    if (matched) return matched;
+  }
+  return value;
+}
+
+// ---------------------------------------------------------------------------
 // Universal Resolver Functions
 // ---------------------------------------------------------------------------
 
@@ -189,94 +217,36 @@ export async function resolveTaskArg(value: string): Promise<string> {
 
 /**
  * Resolve a project argument to a Todoist project ID.
- *
- * Resolution order:
- * 1. Short index (1-999 or #N) -- looked up in cached last-list
- * 2. Name match (exact -> prefix -> substring, case-insensitive)
- * 3. Raw ID -- returned as-is
  */
-export async function resolveProjectArg(value: string): Promise<string> {
-  // 1. Try short index
-  if (isShortIndex(value)) {
-    const id = resolveFromIndex(value);
-    if (id) return id;
-  }
-
-  // 2. If not a number and not a raw ID, try name match
-  if (!isShortIndex(value) && !isRawId(value)) {
+export function resolveProjectArg(value: string): Promise<string> {
+  return resolveNamedEntityArg(value, async () => {
     const projects = await getProjects();
-    const matched = matchByName(
-      value,
-      projects.map((p) => ({ id: p.id, name: p.name })),
-    );
-    if (matched) return matched;
-  }
-
-  // 3. Return as-is
-  return value;
+    return projects.map((p) => ({ id: p.id, name: p.name }));
+  });
 }
 
 /**
  * Resolve a label argument to a Todoist label ID.
- *
- * Resolution order:
- * 1. Short index (1-999 or #N) -- looked up in cached last-list
- * 2. Name match (exact -> prefix -> substring, case-insensitive)
- * 3. Raw ID -- returned as-is
  */
-export async function resolveLabelArg(value: string): Promise<string> {
-  // 1. Try short index
-  if (isShortIndex(value)) {
-    const id = resolveFromIndex(value);
-    if (id) return id;
-  }
-
-  // 2. If not a number and not a raw ID, try name match
-  if (!isShortIndex(value) && !isRawId(value)) {
+export function resolveLabelArg(value: string): Promise<string> {
+  return resolveNamedEntityArg(value, async () => {
     const labels = await getLabels();
-    const matched = matchByName(
-      value,
-      labels.map((l) => ({ id: l.id, name: l.name })),
-    );
-    if (matched) return matched;
-  }
-
-  // 3. Return as-is
-  return value;
+    return labels.map((l) => ({ id: l.id, name: l.name }));
+  });
 }
 
 /**
  * Resolve a section argument to a Todoist section ID.
- *
- * Resolution order:
- * 1. Short index (1-999 or #N) -- looked up in cached last-list
- * 2. Name match (exact -> prefix -> substring, case-insensitive)
- * 3. Raw ID -- returned as-is
- *
  * Optionally scoped to a specific project via projectId.
  */
-export async function resolveSectionArg(
+export function resolveSectionArg(
   value: string,
   projectId?: string,
 ): Promise<string> {
-  // 1. Try short index
-  if (isShortIndex(value)) {
-    const id = resolveFromIndex(value);
-    if (id) return id;
-  }
-
-  // 2. If not a number and not a raw ID, try name match
-  if (!isShortIndex(value) && !isRawId(value)) {
+  return resolveNamedEntityArg(value, async () => {
     const sections = await getSections(projectId);
-    const matched = matchByName(
-      value,
-      sections.map((s) => ({ id: s.id, name: s.name })),
-    );
-    if (matched) return matched;
-  }
-
-  // 3. Return as-is
-  return value;
+    return sections.map((s) => ({ id: s.id, name: s.name }));
+  });
 }
 
 /**

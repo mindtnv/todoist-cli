@@ -1,4 +1,4 @@
-import { requireToken } from "../config/index.ts";
+import { requireToken, getSyncConfig } from "../config/index.ts";
 
 const BASE_URL = "https://api.todoist.com/api/v1";
 
@@ -11,10 +11,8 @@ export function stripUndefined(obj: Record<string, unknown>): Record<string, unk
   return result;
 }
 
-const MAX_RETRIES = 3;
 const BASE_BACKOFF_MS = 1000;
 const RATE_LIMIT_BASE_BACKOFF_MS = 5000;
-const REQUEST_TIMEOUT_MS = 30_000;
 const JITTER_FACTOR = 0.25;
 
 interface PaginatedResponse<T> {
@@ -47,31 +45,54 @@ function isTimeoutError(err: unknown): boolean {
 }
 
 class TodoistClient {
-  private get headers(): Record<string, string> {
-    return {
-      Authorization: `Bearer ${requireToken()}`,
-      "Content-Type": "application/json",
-    };
+  private get authHeaders(): Record<string, string> {
+    return { Authorization: `Bearer ${requireToken()}` };
+  }
+
+  private get jsonHeaders(): Record<string, string> {
+    return { ...this.authHeaders, "Content-Type": "application/json" };
+  }
+
+  private get retryConfig() {
+    const config = getSyncConfig();
+    return { maxRetries: config.retry_count, timeoutMs: config.timeout * 1000 };
   }
 
   async get<T>(path: string, params?: Record<string, string>): Promise<T> {
+    const baseParams = { ...params };
+    let url = this.buildUrl(path, baseParams);
+    const res = await this.fetchWithRetry(url, { headers: this.authHeaders });
+    const data = await this.handleResponse<T | PaginatedResponse<unknown>>(res);
+
+    if (data && typeof data === "object" && "results" in data && "next_cursor" in data) {
+      const paginated = data as PaginatedResponse<unknown>;
+      const allResults = [...paginated.results];
+      let cursor = paginated.next_cursor;
+      while (cursor) {
+        const nextUrl = this.buildUrl(path, { ...baseParams, cursor });
+        const nextRes = await this.fetchWithRetry(nextUrl, { headers: this.authHeaders });
+        const nextData = await this.handleResponse<PaginatedResponse<unknown>>(nextRes);
+        allResults.push(...nextData.results);
+        cursor = nextData.next_cursor;
+      }
+      return allResults as T;
+    }
+    return data as T;
+  }
+
+  private buildUrl(path: string, params?: Record<string, string>): string {
     let url = `${BASE_URL}${path}`;
     if (params) {
       const query = new URLSearchParams(params).toString();
       if (query) url += `?${query}`;
     }
-    const res = await this.fetchWithRetry(url, { headers: this.headers });
-    const data = await this.handleResponse<T | PaginatedResponse<unknown>>(res);
-    if (data && typeof data === "object" && "results" in data && "next_cursor" in data) {
-      return (data as PaginatedResponse<unknown>).results as T;
-    }
-    return data as T;
+    return url;
   }
 
   async post<T>(path: string, body?: Record<string, unknown>): Promise<T> {
     const res = await this.fetchWithRetry(`${BASE_URL}${path}`, {
       method: "POST",
-      headers: this.headers,
+      headers: this.jsonHeaders,
       body: body ? JSON.stringify(body) : undefined,
     });
     return this.handleResponse<T>(res);
@@ -80,7 +101,7 @@ class TodoistClient {
   async patch<T>(path: string, body?: Record<string, unknown>): Promise<T> {
     const res = await this.fetchWithRetry(`${BASE_URL}${path}`, {
       method: "PATCH",
-      headers: this.headers,
+      headers: this.jsonHeaders,
       body: body ? JSON.stringify(body) : undefined,
     });
     return this.handleResponse<T>(res);
@@ -89,7 +110,7 @@ class TodoistClient {
   async del(path: string): Promise<void> {
     const res = await this.fetchWithRetry(`${BASE_URL}${path}`, {
       method: "DELETE",
-      headers: this.headers,
+      headers: this.authHeaders,
     });
     if (!res.ok) await this.throwError(res);
   }
@@ -100,17 +121,18 @@ class TodoistClient {
    * Does NOT retry on 4xx errors (except 429).
    */
   private async fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
+    const { maxRetries, timeoutMs } = this.retryConfig;
     let lastError: Error | undefined;
     let lastRetryAfter: number | undefined;
     let skipNextBackoff = false;
 
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
       // Wait before retrying (skip delay on first attempt and after 429 which has its own delay)
       if (attempt > 0 && !skipNextBackoff) {
         const backoff = BASE_BACKOFF_MS * Math.pow(2, attempt - 1);
         const delay = addJitter(backoff);
         process.stderr.write(
-          `[todoist-cli] Retry ${attempt}/${MAX_RETRIES} in ${Math.round(delay)}ms...\n`,
+          `[todoist-cli] Retry ${attempt}/${maxRetries} in ${Math.round(delay)}ms...\n`,
         );
         await sleep(delay);
       }
@@ -118,7 +140,7 @@ class TodoistClient {
 
       // Set up per-request timeout via AbortController
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
       const fetchInit: RequestInit = {
         ...init,
         signal: controller.signal,
@@ -131,7 +153,7 @@ class TodoistClient {
         clearTimeout(timeoutId);
 
         if (isTimeoutError(err)) {
-          lastError = new Error(`Request timed out after 30s`);
+          lastError = new Error(`Request timed out after ${timeoutMs / 1000}s`);
           continue; // retry on timeout
         }
 
@@ -166,10 +188,10 @@ class TodoistClient {
 
         lastRetryAfter = Math.ceil(waitMs / 1000);
 
-        if (attempt < MAX_RETRIES) {
+        if (attempt < maxRetries) {
           const delay = addJitter(waitMs);
           process.stderr.write(
-            `[todoist-cli] Rate limited (429). Retry ${attempt + 1}/${MAX_RETRIES} in ${Math.round(delay)}ms...\n`,
+            `[todoist-cli] Rate limited (429). Retry ${attempt + 1}/${maxRetries} in ${Math.round(delay)}ms...\n`,
           );
           await sleep(delay);
           skipNextBackoff = true; // already waited with rate-limit-specific delay
@@ -177,7 +199,7 @@ class TodoistClient {
         }
 
         throw new Error(
-          `Rate limit exceeded. Retried ${MAX_RETRIES} times. Try again in ${lastRetryAfter} seconds.`,
+          `Rate limit exceeded. Retried ${maxRetries} times. Try again in ${lastRetryAfter} seconds.`,
         );
       }
 
@@ -205,9 +227,6 @@ class TodoistClient {
   private async throwError(res: Response): Promise<never> {
     if (res.status === 401) {
       throw new Error("Authentication failed. Run `todoist auth` to set a valid API token.");
-    }
-    if (res.status === 429) {
-      throw new Error("Rate limit exceeded. Please wait and try again.");
     }
     let detail = res.statusText;
     try {

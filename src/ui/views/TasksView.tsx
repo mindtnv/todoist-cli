@@ -17,7 +17,7 @@ import { createLabel } from "../../api/labels.ts";
 import { getProjects } from "../../api/projects.ts";
 import { getLabels } from "../../api/labels.ts";
 import { Breadcrumb } from "../components/Breadcrumb.tsx";
-import { PRIORITY_COLORS, PRIORITY_LABELS } from "../constants.ts";
+import { PRIORITY_COLORS, PRIORITY_LABELS, PRIORITY_NAMES } from "../constants.ts";
 import { ModalManager } from "../components/ModalManager.tsx";
 import type { Modal } from "../components/ModalManager.tsx";
 import type { ExtensionRegistry, PaletteRegistry, ViewRegistry, PluginContext, HookRegistry } from "../../plugins/types.ts";
@@ -28,13 +28,6 @@ import { useTaskOperations } from "../hooks/useTaskOperations.ts";
 import { useKeyboardHandler } from "../hooks/useKeyboardHandler.ts";
 
 type Panel = "sidebar" | "tasks";
-
-const PRIORITY_NAMES: Record<number, string> = {
-  1: "Normal",
-  2: "Medium",
-  3: "High",
-  4: "Urgent",
-};
 
 export interface ListViewState {
   taskIndex: number;
@@ -491,7 +484,7 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
         { name: "edit", description: `Edit "${selectedTask.content}"`, shortcut: "e", action: () => { setModal("editFull"); }, category: "task" },
         { name: "rename", description: `Rename "${selectedTask.content}"`, shortcut: "R", action: () => { setModal("rename"); }, category: "task" },
         { name: "complete", description: `Complete "${selectedTask.content}"`, shortcut: "c", action: () => { setModal("none"); handleCompleteTask(); }, category: "task" },
-        { name: "delete", description: `Delete "${selectedTask.content}"`, shortcut: "d", action: () => { setModal("none"); setModal("delete"); }, category: "task" },
+        { name: "delete", description: `Delete "${selectedTask.content}"`, shortcut: "d", action: () => { setModal("delete"); }, category: "task" },
         { name: "open", description: `Open "${selectedTask.content}" detail`, shortcut: "Enter", action: () => { setModal("none"); onOpenTask?.(selectedTask); }, category: "task" },
         { name: "due", description: `Set due date for "${selectedTask.content}"`, shortcut: "t", action: () => { setModal("due"); }, category: "task" },
         { name: "deadline", description: `Set deadline for "${selectedTask.content}"`, shortcut: "D", action: () => { setModal("deadline"); }, category: "task" },
@@ -504,7 +497,7 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
     if (selectedIds.size > 0) {
       cmds.push(
         { name: "complete-selected", description: `Complete ${selectedIds.size} selected tasks`, action: () => { setModal("none"); handleBulkComplete(); }, category: "bulk" },
-        { name: "delete-selected", description: `Delete ${selectedIds.size} selected tasks`, action: () => { setModal("none"); setModal("bulkDelete"); }, category: "bulk" },
+        { name: "delete-selected", description: `Delete ${selectedIds.size} selected tasks`, action: () => { setModal("bulkDelete"); }, category: "bulk" },
         { name: "labels-selected", description: `Edit labels for ${selectedIds.size} selected tasks`, action: () => { setModal("label"); }, category: "bulk" },
         { name: "clear-selection", description: "Clear all selections", action: () => { setSelectedIds(new Set()); setRangeSelectAnchor(null); setModal("none"); }, category: "bulk" },
       );
@@ -669,13 +662,11 @@ export function TasksView({ tasks, projects, labels, sections, onTasksChange, on
   useEffect(() => {
     const interval = setInterval(() => {
       if (modalRef.current === "none" && !lastActionRef.current) {
-        getTasks()
-          .then((newTasks) => onTasksChange(newTasks))
-          .catch(() => {});
+        refreshTasks();
       }
     }, 60000);
     return () => clearInterval(interval);
-  }, [onTasksChange]);
+  }, [refreshTasks]);
 
   const hasSelection = selectedIds.size > 0;
   const isSearching = modal === "search" || searchQuery !== "";

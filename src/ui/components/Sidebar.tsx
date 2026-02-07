@@ -166,7 +166,10 @@ export function Sidebar({
     };
   }, [activeProjectId]);
 
-  const items = buildSidebarItems(projects, labels, tasks, sections, activeProjectId, pluginViews);
+  const items = useMemo(
+    () => buildSidebarItems(projects, labels, tasks, sections, activeProjectId, pluginViews),
+    [projects, labels, tasks, sections, activeProjectId, pluginViews]
+  );
 
   // Build icon map including plugin view icons
   const iconMap = useMemo(() => {
@@ -189,6 +192,22 @@ export function Sidebar({
       });
     return Math.min(38, Math.max(24, Math.max(...lengths, 24)));
   }, [items]);
+
+  const scrolledItems = useMemo(() => {
+    let scrollStart = 0;
+    if (items.length > sidebarViewHeight) {
+      const half = Math.floor(sidebarViewHeight / 2);
+      scrollStart = Math.max(0, selectedIndex - half);
+      const scrollEnd = scrollStart + sidebarViewHeight;
+      if (scrollEnd > items.length) {
+        scrollStart = Math.max(0, items.length - sidebarViewHeight);
+      }
+    }
+    const visibleItems = items.length > sidebarViewHeight
+      ? items.slice(scrollStart, scrollStart + sidebarViewHeight)
+      : items;
+    return { visibleItems, scrollStart };
+  }, [items, sidebarViewHeight, selectedIndex]);
 
   useInput(
     (input, key) => {
@@ -227,19 +246,7 @@ export function Sidebar({
       <Text bold color="green">Todoist</Text>
       <Box marginTop={1} flexDirection="column">
         {(() => {
-          // Viewport-based scrolling
-          let scrollStart = 0;
-          if (items.length > sidebarViewHeight) {
-            const half = Math.floor(sidebarViewHeight / 2);
-            scrollStart = Math.max(0, selectedIndex - half);
-            const scrollEnd = scrollStart + sidebarViewHeight;
-            if (scrollEnd > items.length) {
-              scrollStart = Math.max(0, items.length - sidebarViewHeight);
-            }
-          }
-          const visibleItems = items.length > sidebarViewHeight
-            ? items.slice(scrollStart, scrollStart + sidebarViewHeight)
-            : items;
+          const { visibleItems, scrollStart } = scrolledItems;
 
           return visibleItems.map((item, vi) => {
             const i = scrollStart + vi;

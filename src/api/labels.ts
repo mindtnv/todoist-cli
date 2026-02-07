@@ -5,6 +5,10 @@ export async function getLabels(): Promise<Label[]> {
   return api.get<Label[]>("/labels");
 }
 
+export async function getLabel(id: string): Promise<Label> {
+  return api.get<Label>(`/labels/${id}`);
+}
+
 export async function createLabel(params: CreateLabelParams): Promise<Label> {
   return api.post<Label>("/labels", stripUndefined(params as unknown as Record<string, unknown>));
 }

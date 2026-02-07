@@ -37,7 +37,7 @@ export function createPluginStorage(dataDir: string): PluginStorageWithClose {
   );
   const kvDelete = db.prepare("DELETE FROM kv WHERE key = ?");
   const kvListAll = db.prepare("SELECT key FROM kv");
-  const kvListPrefix = db.prepare("SELECT key FROM kv WHERE key LIKE ?");
+  const kvListPrefix = db.prepare("SELECT key FROM kv WHERE key LIKE ? ESCAPE '\\'");
 
   const tdGet = db.prepare(
     "SELECT value FROM task_data WHERE task_id = ? AND key = ?",

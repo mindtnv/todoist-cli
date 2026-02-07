@@ -29,6 +29,10 @@ const DEFAULT_MARKETPLACE_NAME = "todoist-cli-official";
 
 // ── Helpers ──
 
+function isValidPluginName(name: string): boolean {
+  return /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(name);
+}
+
 function ensureDir(dir: string): void {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
@@ -177,7 +181,10 @@ export async function fetchMarketplaceManifest(
   }
 
   // Check if it's a URL (http/https)
-  if (config.source.startsWith("http://") || config.source.startsWith("https://")) {
+  if (config.source.startsWith("http://")) {
+    throw new Error("HTTP marketplace sources are not supported for security. Use HTTPS.");
+  }
+  if (config.source.startsWith("https://")) {
     const response = await fetch(config.source);
     if (!response.ok) {
       throw new Error(
@@ -239,6 +246,9 @@ export async function installPlugin(
   pluginName: string,
   marketplaceName?: string,
 ): Promise<InstallResult> {
+  if (!isValidPluginName(pluginName)) {
+    throw new Error(`Invalid plugin name "${pluginName}". Names must start with an alphanumeric character and contain only alphanumeric characters, hyphens, and underscores.`);
+  }
   ensureDir(PLUGINS_DIR);
 
   const allPlugins = await discoverPlugins();
@@ -377,6 +387,9 @@ function resolveExternalSource(
 // ── Plugin Removal ──
 
 export function removePlugin(name: string): void {
+  if (!isValidPluginName(name)) {
+    throw new Error(`Invalid plugin name "${name}". Names must start with an alphanumeric character and contain only alphanumeric characters, hyphens, and underscores.`);
+  }
   const targetDir = join(PLUGINS_DIR, name);
   if (existsSync(targetDir)) {
     rmSync(targetDir, { recursive: true, force: true });
@@ -388,6 +401,9 @@ export function removePlugin(name: string): void {
 // ── Plugin Update ──
 
 export async function updatePlugin(name: string): Promise<UpdateResult> {
+  if (!isValidPluginName(name)) {
+    throw new Error(`Invalid plugin name "${name}". Names must start with an alphanumeric character and contain only alphanumeric characters, hyphens, and underscores.`);
+  }
   const config = getConfig();
   const plugins = config.plugins;
 

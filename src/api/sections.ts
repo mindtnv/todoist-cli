@@ -7,6 +7,10 @@ export async function getSections(projectId?: string): Promise<Section[]> {
   return api.get<Section[]>("/sections", params);
 }
 
+export async function getSection(id: string): Promise<Section> {
+  return api.get<Section>(`/sections/${id}`);
+}
+
 export async function createSection(params: CreateSectionParams): Promise<Section> {
   return api.post<Section>("/sections", stripUndefined(params as unknown as Record<string, unknown>));
 }

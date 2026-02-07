@@ -1,8 +1,8 @@
 import { useInput } from "ink";
 import type { Task } from "../../api/types.ts";
 import type { ExtensionRegistry, PluginContext } from "../../plugins/types.ts";
+import type { Modal } from "../components/ModalManager.tsx";
 
-type Modal = "none" | "add" | "addSubtask" | "edit" | "delete" | "filter" | "search" | "help" | "sort" | "bulkDelete" | "command" | "due" | "deadline" | "move" | "label" | "editFull" | "createFull" | "rename" | "pluginInput" | "createProject" | "createLabel";
 type Panel = "sidebar" | "tasks";
 
 interface UseKeyboardHandlerOptions {

@@ -1,37 +1,13 @@
 import chalk from "chalk";
 import type { Task } from "../../../api/types.ts";
-import { getTasks } from "../../../api/tasks.ts";
 import { getProjects } from "../../../api/projects.ts";
-import { resolveProjectName, resolveSectionName } from "../../../utils/quick-add.ts";
 import { padEnd, priorityLabel, truncate, ID_WIDTH, PRI_WIDTH, getContentWidth, getDueWidth } from "../../../utils/format.ts";
 import { saveLastList } from "../../../utils/resolve.ts";
 
-async function readStdin(): Promise<string> {
+export async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
   return Buffer.concat(chunks).toString("utf-8");
-}
-
-export async function readIdsFromStdin(): Promise<string[]> {
-  const input = await readStdin();
-  return input.split(/\s+/).map(s => s.trim()).filter(Boolean);
-}
-
-export { readStdin };
-
-export async function resolveIds(ids: string[], filterQuery?: string): Promise<string[]> {
-  // If "-" is in the list, read from stdin
-  if (ids.length === 1 && ids[0] === "-") {
-    return readIdsFromStdin();
-  }
-
-  // If filter is provided, fetch matching task IDs
-  if (filterQuery) {
-    const tasks = await getTasks({ filter: filterQuery });
-    return tasks.map(t => t.id);
-  }
-
-  return ids;
 }
 
 function formatDue(task: Task): string {
@@ -273,17 +249,4 @@ export function printGrouped(groups: GroupedTasks[]): void {
   saveLastList("task", allTasks.map(t => ({ id: t.id, label: t.content })));
 }
 
-export async function resolveProjectOpt(value: string): Promise<string> {
-  // If it looks like a raw ID (alphanumeric, long), use it directly
-  // Otherwise try to resolve by name
-  const resolved = await resolveProjectName(value);
-  if (resolved) return resolved;
-  // Fall back to using as-is (could be an ID)
-  return value;
-}
 
-export async function resolveSectionOpt(value: string, projectId?: string): Promise<string> {
-  const resolved = await resolveSectionName(value, projectId);
-  if (resolved) return resolved;
-  return value;
-}

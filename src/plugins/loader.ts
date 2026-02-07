@@ -12,6 +12,21 @@ import { CONFIG_DIR, getConfig } from "../config/index.ts";
 
 const PLUGINS_DIR = join(CONFIG_DIR, "plugins");
 
+function isValidPlugin(value: unknown): value is TodoistPlugin {
+  if (typeof value !== "object" || value === null) return false;
+  const obj = value as Record<string, unknown>;
+  if (typeof obj.name !== "string" || obj.name.length === 0) return false;
+  if (typeof obj.version !== "string") return false;
+  const optionalFns: string[] = [
+    "onLoad", "onUnload", "registerHooks", "registerViews",
+    "registerExtensions", "registerPaletteCommands",
+  ];
+  for (const key of optionalFns) {
+    if (obj[key] !== undefined && typeof obj[key] !== "function") return false;
+  }
+  return true;
+}
+
 /**
  * Plugins live in ~/.config/todoist-cli/plugins/ which is outside the CLI's
  * module resolution tree. They need access to host dependencies (react, ink,
@@ -114,7 +129,7 @@ export async function loadPlugins(
     if (pluginConfig.enabled === false) continue;
 
     const pluginDir = pluginConfig.path
-      ? resolve(process.cwd(), pluginConfig.path)
+      ? resolve(CONFIG_DIR, pluginConfig.path)
       : join(PLUGINS_DIR, name);
     if (!existsSync(pluginDir)) {
       console.warn(`[plugins] Directory not found for "${name}", skipping`);
@@ -138,8 +153,8 @@ export async function loadPlugins(
       const mod = await import(modulePath);
       const plugin: TodoistPlugin = mod.default ?? mod;
 
-      if (!plugin.name) {
-        console.warn(`[plugins] Plugin at "${pluginDir}" has no name, skipping`);
+      if (!isValidPlugin(plugin)) {
+        console.warn(`[plugins] Plugin at "${pluginDir}" is not a valid TodoistPlugin (must have name, version, and valid lifecycle methods), skipping`);
         continue;
       }
 
