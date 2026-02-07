@@ -1,5 +1,5 @@
-import { join, dirname, resolve } from "path";
-import { existsSync, readFileSync, symlinkSync, lstatSync, unlinkSync, realpathSync } from "fs";
+import { join, dirname, resolve, basename } from "path";
+import { existsSync, readFileSync, symlinkSync, lstatSync, unlinkSync, realpathSync, cpSync, rmSync } from "fs";
 import type {
   TodoistPlugin, PluginManifest, PluginContext,
   HookRegistry, ViewRegistry, ExtensionRegistry, PaletteRegistry,
@@ -15,6 +15,8 @@ const log = getLogger("plugins");
 
 const PLUGINS_DIR = join(CONFIG_DIR, "plugins");
 
+// ── Constants & Version ─────────────────────────────────────────────
+
 // Read CLI version from package.json at build time
 const CLI_VERSION = (() => {
   try {
@@ -25,6 +27,8 @@ const CLI_VERSION = (() => {
     return "0.0.0";
   }
 })();
+
+// ── Version Checking ────────────────────────────────────────────────
 
 /**
  * Simple semver comparison. Handles `>=X.Y.Z` format.
@@ -54,6 +58,8 @@ function satisfiesVersion(required: string, current: string): boolean {
   return true;
 }
 
+// ── Plugin Validation ───────────────────────────────────────────────
+
 function isValidPlugin(value: unknown): value is TodoistPlugin {
   if (typeof value !== "object" || value === null) return false;
   const obj = value as Record<string, unknown>;
@@ -69,18 +75,15 @@ function isValidPlugin(value: unknown): value is TodoistPlugin {
   return true;
 }
 
+// ── Dependency & Symlink Management ─────────────────────────────────
+
 /**
  * Plugins live in ~/.config/todoist-cli/plugins/ which is outside the CLI's
  * module resolution tree. They need access to host dependencies (react, ink,
  * chalk, etc.) and MUST share the same React instance to avoid hook errors.
  *
  * We create a symlink: PLUGINS_DIR/node_modules → CLI's node_modules.
- * Bun's module resolution walks up from plugin files and finds this symlink.
- *
- * Alternatives considered and rejected:
- * - Bun.plugin onResolve: does not intercept runtime dynamic imports
- * - NODE_PATH: only works when set before process starts, not from within
- * - bun install per plugin: creates separate React copies → hook errors
+ * Module resolution walks up from plugin files and finds this symlink.
  */
 function ensureSharedDependencies(): void {
   if (!existsSync(PLUGINS_DIR)) return;
@@ -109,13 +112,67 @@ function ensureSharedDependencies(): void {
   }
 }
 
+/** Directories to skip when syncing symlinked plugin sources */
+const SYNC_SKIP = new Set(["node_modules", ".git", "data"]);
+
+/**
+ * For symlinked plugins (local marketplace dev), the runtime resolves the
+ * symlink to the real path and looks for dependencies there — finding React
+ * from the dev project instead of the host CLI. This creates a duplicate
+ * React instance and breaks hooks.
+ *
+ * Fix: copy the plugin's source files into a physical directory under
+ * PLUGINS_DIR. Module resolution from the physical copy walks up to
+ * PLUGINS_DIR/node_modules (set up by ensureSharedDependencies), ensuring
+ * a single shared React instance.
+ *
+ * No cleanup or exit handlers needed — copies persist harmlessly.
+ */
+function syncSymlinkedPlugin(pluginDir: string, name: string): string {
+  try {
+    if (!lstatSync(pluginDir).isSymbolicLink()) return pluginDir;
+  } catch {
+    return pluginDir;
+  }
+
+  try {
+    const realDir = realpathSync(pluginDir);
+    const syncDir = join(PLUGINS_DIR, `_dev_${name}`);
+
+    // Remove stale copy first so deleted source files don't linger
+    if (existsSync(syncDir)) {
+      rmSync(syncDir, { recursive: true, force: true });
+    }
+
+    cpSync(realDir, syncDir, {
+      recursive: true,
+      filter: (src: string) => {
+        if (src === realDir) return true;
+        // Use path.basename for cross-platform compatibility
+        return !SYNC_SKIP.has(basename(src));
+      },
+    });
+
+    log.debug(`Synced symlinked plugin "${name}" → ${syncDir}`);
+    return syncDir;
+  } catch (err) {
+    log.warn(`Failed to sync symlinked plugin "${name}": ${err instanceof Error ? err.message : err}`);
+    return pluginDir; // Fallback to original (may still work under Bun dev)
+  }
+}
+
+// ── Plugin Logger ───────────────────────────────────────────────────
+
 function createLogger(pluginName: string): PluginLogger {
+  const pluginLog = getLogger(`plugin:${pluginName}`);
   return {
-    info: (msg: string) => console.log(`[plugin:${pluginName}] ${msg}`),
-    warn: (msg: string) => console.warn(`[plugin:${pluginName}] ${msg}`),
-    error: (msg: string) => console.error(`[plugin:${pluginName}] ${msg}`),
+    info: (msg: string) => pluginLog.info(msg),
+    warn: (msg: string) => pluginLog.warn(msg),
+    error: (msg: string) => pluginLog.error(msg),
   };
 }
+
+// ── Topological Sort ────────────────────────────────────────────────
 
 /**
  * Topological sort of plugin entries based on their `after` field.
@@ -196,6 +253,117 @@ function topologicalSort(
   return sorted.map((name) => [name, entryMap.get(name)!] as [string, PluginConfigEntry]);
 }
 
+// ── Context Tracking ────────────────────────────────────────────────
+
+/**
+ * Tracks which PluginContext registered each item across all registries.
+ * Replaces the six individual Map<string, PluginContext> fields with a
+ * single consolidated data structure.
+ *
+ * Adding a new tracked category requires only adding a new ContextMapName
+ * and the corresponding tracking calls in the registry factory function.
+ */
+class ContextTracker {
+  private readonly maps = new Map<string, Map<string, PluginContext>>();
+
+  /** Get or create a named context map */
+  getMap(name: string): Map<string, PluginContext> {
+    let map = this.maps.get(name);
+    if (!map) {
+      map = new Map();
+      this.maps.set(name, map);
+    }
+    return map;
+  }
+
+  track(mapName: string, key: string, ctx: PluginContext): void {
+    this.getMap(mapName).set(key, ctx);
+  }
+
+  untrack(mapName: string, key: string): void {
+    this.getMap(mapName).delete(key);
+  }
+
+  /**
+   * Remove all entries owned by `ctx` across all maps.
+   * Returns removed entries grouped by map name for cleanup callbacks.
+   */
+  removeAllForContext(ctx: PluginContext): Map<string, string[]> {
+    const removed = new Map<string, string[]>();
+    for (const [mapName, map] of this.maps) {
+      const keys: string[] = [];
+      for (const [key, registeredCtx] of map) {
+        if (registeredCtx === ctx) keys.push(key);
+      }
+      for (const key of keys) map.delete(key);
+      if (keys.length > 0) removed.set(mapName, keys);
+    }
+    return removed;
+  }
+}
+
+/** Creates a ViewRegistry wrapper that tracks registrations in the ContextTracker */
+function trackingViewRegistry(
+  views: ViewRegistry, tracker: ContextTracker, ctx: PluginContext,
+): ViewRegistry {
+  return {
+    addView(view) {
+      views.addView(view);
+      tracker.track("view", view.name, ctx);
+    },
+    removeView(name) {
+      views.removeView(name);
+      tracker.untrack("view", name);
+    },
+    getViews: () => views.getViews(),
+  };
+}
+
+/** Creates an ExtensionRegistry wrapper that tracks registrations in the ContextTracker */
+function trackingExtensionRegistry(
+  ext: ExtensionRegistry, tracker: ContextTracker, ctx: PluginContext,
+): ExtensionRegistry {
+  return {
+    addTaskColumn(col) { ext.addTaskColumn(col); tracker.track("column", col.id, ctx); },
+    addDetailSection(sec) { ext.addDetailSection(sec); tracker.track("detailSection", sec.id, ctx); },
+    addKeybinding(b) { ext.addKeybinding(b); tracker.track("keybinding", b.key, ctx); },
+    addStatusBarItem(item) { ext.addStatusBarItem(item); tracker.track("statusBar", item.id, ctx); },
+    removeTaskColumn(id) { ext.removeTaskColumn(id); tracker.untrack("column", id); },
+    removeDetailSection(id) { ext.removeDetailSection(id); tracker.untrack("detailSection", id); },
+    removeKeybinding(key) { ext.removeKeybinding(key); tracker.untrack("keybinding", key); },
+    removeStatusBarItem(id) { ext.removeStatusBarItem(id); tracker.untrack("statusBar", id); },
+    addModal(d) { ext.addModal(d); },
+    removeModal(id) { ext.removeModal(id); },
+    addSidebarSection(s) { ext.addSidebarSection(s); },
+    removeSidebarSection(id) { ext.removeSidebarSection(id); },
+    getTaskColumns: () => ext.getTaskColumns(),
+    getDetailSections: () => ext.getDetailSections(),
+    getKeybindings: () => ext.getKeybindings(),
+    getStatusBarItems: () => ext.getStatusBarItems(),
+    getModals: () => ext.getModals(),
+    getSidebarSections: () => ext.getSidebarSections(),
+  };
+}
+
+/** Creates a PaletteRegistry wrapper that tracks registrations in the ContextTracker */
+function trackingPaletteRegistry(
+  palette: PaletteRegistry, tracker: ContextTracker, ctx: PluginContext,
+): PaletteRegistry {
+  return {
+    addCommands(commands) {
+      palette.addCommands(commands);
+      for (const cmd of commands) tracker.track("palette", cmd.label, ctx);
+    },
+    removeCommands(labels) {
+      palette.removeCommands(labels);
+      for (const label of labels) tracker.untrack("palette", label);
+    },
+    getCommands: () => palette.getCommands(),
+  };
+}
+
+// ── Public API ──────────────────────────────────────────────────────
+
 export interface LoadedPlugins {
   plugins: Array<{ plugin: TodoistPlugin; ctx: PluginContext }>;
   storages: PluginStorageWithClose[];
@@ -203,6 +371,8 @@ export interface LoadedPlugins {
   views: ViewRegistry;
   extensions: ExtensionRegistry;
   palette: PaletteRegistry;
+  /** @internal Used by unloadPlugins for cleanup */
+  _tracker: ContextTracker;
   /** Maps view name to the PluginContext of the plugin that registered it */
   viewContextMap: Map<string, PluginContext>;
   /** Maps keybinding key to the PluginContext of the plugin that registered it */
@@ -217,6 +387,9 @@ export interface LoadedPlugins {
   statusBarContextMap: Map<string, PluginContext>;
 }
 
+/** Internal fields stripped from plugin config before passing to ctx.config */
+const INTERNAL_CONFIG_KEYS = new Set(["source", "enabled", "after", "path"]);
+
 export async function loadPlugins(
   hooks: HookRegistry,
   views: ViewRegistry,
@@ -227,19 +400,19 @@ export async function loadPlugins(
   const pluginConfigs = config.plugins as
     Record<string, PluginConfigEntry> | undefined;
 
-  const viewContextMap = new Map<string, PluginContext>();
-  const keybindingContextMap = new Map<string, PluginContext>();
-  const columnContextMap = new Map<string, PluginContext>();
-  const detailSectionContextMap = new Map<string, PluginContext>();
-  const paletteContextMap = new Map<string, PluginContext>();
-  const statusBarContextMap = new Map<string, PluginContext>();
-
+  const tracker = new ContextTracker();
   const storages: PluginStorageWithClose[] = [];
 
   const loaded: LoadedPlugins = {
     plugins: [], storages, hooks, views, extensions, palette,
-    viewContextMap, keybindingContextMap, columnContextMap,
-    detailSectionContextMap, paletteContextMap, statusBarContextMap,
+    _tracker: tracker,
+    // Backward-compatible accessors backed by the shared tracker
+    get viewContextMap() { return tracker.getMap("view"); },
+    get keybindingContextMap() { return tracker.getMap("keybinding"); },
+    get columnContextMap() { return tracker.getMap("column"); },
+    get detailSectionContextMap() { return tracker.getMap("detailSection"); },
+    get paletteContextMap() { return tracker.getMap("palette"); },
+    get statusBarContextMap() { return tracker.getMap("statusBar"); },
   };
 
   if (!pluginConfigs) return loaded;
@@ -271,7 +444,6 @@ export async function loadPlugins(
           manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as PluginManifest;
         } catch (parseErr) {
           log.warn(`Invalid plugin.json for "${name}": ${parseErr instanceof Error ? parseErr.message : parseErr}`);
-          // Continue without manifest — will use default main path
         }
       }
 
@@ -286,7 +458,12 @@ export async function loadPlugins(
       }
 
       const mainFile = manifest?.main ?? "./src/index.ts";
-      const modulePath = join(pluginDir, mainFile);
+
+      // For symlinked plugins, copy sources into PLUGINS_DIR so module
+      // resolution finds the host's React/Ink (prevents dual-React crashes)
+      const loadDir = syncSymlinkedPlugin(pluginDir, name);
+      const modulePath = join(loadDir, mainFile);
+
       const mod = await import(modulePath);
       const plugin: TodoistPlugin = mod.default ?? mod;
 
@@ -295,116 +472,33 @@ export async function loadPlugins(
         continue;
       }
 
+      // Storage uses the stable pluginDir (not the sync copy) so data persists
       const dataDir = join(pluginDir, "data");
       const storage = createPluginStorage(dataDir);
       storages.push(storage);
       const api = createApiProxy(hooks, manifest?.permissions);
       const pluginLog = createLogger(plugin.name);
 
-      const { source: _, enabled: _e, after: _a, ...pluginSpecificConfig } = pluginConfig;
+      // Strip internal loader keys from config before passing to plugin
+      const pluginSpecificConfig: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(pluginConfig)) {
+        if (!INTERNAL_CONFIG_KEYS.has(k)) pluginSpecificConfig[k] = v;
+      }
 
       const ctx: PluginContext = {
-        api,
-        storage,
-        config: pluginSpecificConfig,
-        pluginDir,
-        log: pluginLog,
+        api, storage, config: pluginSpecificConfig, pluginDir, log: pluginLog,
       };
 
       if (plugin.onLoad) await plugin.onLoad(ctx);
       if (plugin.registerHooks) plugin.registerHooks(hooks);
-
-      // Track view registrations to map view-name -> ctx
       if (plugin.registerViews) {
-        const trackingViewRegistry: ViewRegistry = {
-          addView(view) {
-            views.addView(view);
-            viewContextMap.set(view.name, ctx);
-          },
-          removeView(name) {
-            views.removeView(name);
-            viewContextMap.delete(name);
-          },
-          getViews: () => views.getViews(),
-        };
-        plugin.registerViews(trackingViewRegistry);
+        plugin.registerViews(trackingViewRegistry(views, tracker, ctx));
       }
-
-      // Track extension registrations to map ids -> ctx
       if (plugin.registerExtensions) {
-        const trackingExtRegistry: ExtensionRegistry = {
-          addTaskColumn(column) {
-            extensions.addTaskColumn(column);
-            columnContextMap.set(column.id, ctx);
-          },
-          addDetailSection(section) {
-            extensions.addDetailSection(section);
-            detailSectionContextMap.set(section.id, ctx);
-          },
-          addKeybinding(binding) {
-            extensions.addKeybinding(binding);
-            keybindingContextMap.set(binding.key, ctx);
-          },
-          addStatusBarItem(item) {
-            extensions.addStatusBarItem(item);
-            statusBarContextMap.set(item.id, ctx);
-          },
-          removeTaskColumn(id) {
-            extensions.removeTaskColumn(id);
-            columnContextMap.delete(id);
-          },
-          removeDetailSection(id) {
-            extensions.removeDetailSection(id);
-            detailSectionContextMap.delete(id);
-          },
-          removeKeybinding(key) {
-            extensions.removeKeybinding(key);
-            keybindingContextMap.delete(key);
-          },
-          removeStatusBarItem(id) {
-            extensions.removeStatusBarItem(id);
-            statusBarContextMap.delete(id);
-          },
-          addModal(definition) {
-            extensions.addModal(definition);
-          },
-          removeModal(id) {
-            extensions.removeModal(id);
-          },
-          addSidebarSection(section) {
-            extensions.addSidebarSection(section);
-          },
-          removeSidebarSection(id) {
-            extensions.removeSidebarSection(id);
-          },
-          getTaskColumns: () => extensions.getTaskColumns(),
-          getDetailSections: () => extensions.getDetailSections(),
-          getKeybindings: () => extensions.getKeybindings(),
-          getStatusBarItems: () => extensions.getStatusBarItems(),
-          getModals: () => extensions.getModals(),
-          getSidebarSections: () => extensions.getSidebarSections(),
-        };
-        plugin.registerExtensions(trackingExtRegistry);
+        plugin.registerExtensions(trackingExtensionRegistry(extensions, tracker, ctx));
       }
-
-      // Track palette command registrations to map label -> ctx
       if (plugin.registerPaletteCommands) {
-        const trackingPaletteRegistry: PaletteRegistry = {
-          addCommands(commands) {
-            palette.addCommands(commands);
-            for (const cmd of commands) {
-              paletteContextMap.set(cmd.label, ctx);
-            }
-          },
-          removeCommands(labels) {
-            palette.removeCommands(labels);
-            for (const label of labels) {
-              paletteContextMap.delete(label);
-            }
-          },
-          getCommands: () => palette.getCommands(),
-        };
-        plugin.registerPaletteCommands(trackingPaletteRegistry);
+        plugin.registerPaletteCommands(trackingPaletteRegistry(palette, tracker, ctx));
       }
 
       loaded.plugins.push({ plugin, ctx });
@@ -417,13 +511,24 @@ export async function loadPlugins(
   return loaded;
 }
 
+/** Maps context map names to their registry removal functions */
+function buildRemovers(
+  views: ViewRegistry, extensions: ExtensionRegistry, palette: PaletteRegistry,
+): Record<string, (keys: string[]) => void> {
+  return {
+    view: (keys) => keys.forEach((k) => views.removeView(k)),
+    keybinding: (keys) => keys.forEach((k) => extensions.removeKeybinding(k)),
+    column: (keys) => keys.forEach((k) => extensions.removeTaskColumn(k)),
+    detailSection: (keys) => keys.forEach((k) => extensions.removeDetailSection(k)),
+    statusBar: (keys) => keys.forEach((k) => extensions.removeStatusBarItem(k)),
+    palette: (keys) => palette.removeCommands(keys),
+  };
+}
+
 export async function unloadPlugins(loaded: LoadedPlugins): Promise<void> {
   log.debug(`Unloading ${loaded.plugins.length} plugin(s)`);
-  const {
-    views, extensions, palette, hooks,
-    viewContextMap, keybindingContextMap, columnContextMap,
-    detailSectionContextMap, paletteContextMap, statusBarContextMap,
-  } = loaded;
+  const { views, extensions, palette, hooks, _tracker } = loaded;
+  const removers = buildRemovers(views, extensions, palette);
 
   for (const { plugin, ctx } of loaded.plugins) {
     try {
@@ -432,68 +537,17 @@ export async function unloadPlugins(loaded: LoadedPlugins): Promise<void> {
       log.error(`Error unloading "${plugin.name}"`, err);
     }
 
-    // Clean up all registered views for this plugin
-    for (const [name, registeredCtx] of viewContextMap) {
-      if (registeredCtx === ctx) {
-        views.removeView(name);
-        viewContextMap.delete(name);
-      }
+    // Remove all tracked registrations for this plugin in one pass
+    const removed = _tracker.removeAllForContext(ctx);
+    for (const [mapName, keys] of removed) {
+      removers[mapName]?.(keys);
     }
 
-    // Clean up keybindings
-    for (const [key, registeredCtx] of keybindingContextMap) {
-      if (registeredCtx === ctx) {
-        extensions.removeKeybinding(key);
-        keybindingContextMap.delete(key);
-      }
-    }
-
-    // Clean up task columns
-    for (const [id, registeredCtx] of columnContextMap) {
-      if (registeredCtx === ctx) {
-        extensions.removeTaskColumn(id);
-        columnContextMap.delete(id);
-      }
-    }
-
-    // Clean up detail sections
-    for (const [id, registeredCtx] of detailSectionContextMap) {
-      if (registeredCtx === ctx) {
-        extensions.removeDetailSection(id);
-        detailSectionContextMap.delete(id);
-      }
-    }
-
-    // Clean up palette commands
-    const paletteLabelsToRemove: string[] = [];
-    for (const [label, registeredCtx] of paletteContextMap) {
-      if (registeredCtx === ctx) {
-        paletteLabelsToRemove.push(label);
-        paletteContextMap.delete(label);
-      }
-    }
-    if (paletteLabelsToRemove.length > 0) {
-      palette.removeCommands(paletteLabelsToRemove);
-    }
-
-    // Clean up status bar items
-    for (const [id, registeredCtx] of statusBarContextMap) {
-      if (registeredCtx === ctx) {
-        extensions.removeStatusBarItem(id);
-        statusBarContextMap.delete(id);
-      }
-    }
-
-    // Clean up hook handlers registered by this plugin
     hooks.removeAllForPlugin(plugin.name);
   }
 
   // Close all plugin storage database connections
   for (const storage of loaded.storages) {
-    try {
-      storage.close();
-    } catch {
-      // Ignore close errors during shutdown
-    }
+    try { storage.close(); } catch { /* Ignore close errors during shutdown */ }
   }
 }
